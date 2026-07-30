@@ -26,7 +26,7 @@ from transformers import AutoTokenizer
 
 import tasks as T
 from configs.transcript_format import SpeakerStyle, render_transcript
-from data.build_sft import lang_ok
+from data.build_sft import lang_ok, notes_ok
 
 # single-pass: whole transcript in one prompt, same budget the student was trained with
 N_CTX = 32768
@@ -53,7 +53,12 @@ BAD = re.compile(r"<think>|^#{1,6}\s|^(here('s| is| are)|sure|okay|certainly)\b|
 
 
 def fmt_ok(task: str, out: str, lang: str) -> bool:
-    if not out.strip() or BAD.search(out):
+    if not out.strip():
+        return False
+    if task == "notes":
+        # strict wire-format compliance (docs/OUTPUT-FORMAT.md v2) — the point of v2
+        return notes_ok(out)
+    if BAD.search(out):
         return False
     if task == "title":
         return "\n" not in out and (len(out.split()) <= 10 if lang == "en" else len(out) <= 20)
@@ -91,6 +96,7 @@ async def eval_meeting(students, judge_c, args, meeting, results):
         ("summarize", None), ("summarize", cross),
         ("actions", None), ("title", None),
         ("exec_summary", None), ("open_questions", None),
+        ("notes", None), ("notes", cross),
     ]
     sampler = dict(args.sampler)
     for task, tgt in cases:
@@ -115,6 +121,15 @@ async def eval_meeting(students, judge_c, args, meeting, results):
                 if not fits(p, 384):
                     continue
                 out = await gen(students, args.student, p, 384, sampler)
+                ref = transcript
+            elif task == "notes":
+                zh = eff == "zh-TW"
+                clause = "" if tgt is None else T.lang_clause(T.TARGET_LANG[tgt])
+                p = (T.NOTES_TEMPLATE_ZH % transcript if zh
+                     else T.NOTES_TEMPLATE % (clause, transcript))
+                if not fits(p, T.NOTES_MAX_TOKENS):
+                    continue
+                out = await gen(students, args.student, p, T.NOTES_MAX_TOKENS, sampler)
                 ref = transcript
             else:
                 en_p, zh_p, mt = T.INSIGHT_TASKS[task]
