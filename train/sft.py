@@ -12,9 +12,16 @@ import argparse
 import json
 from pathlib import Path
 
+import torch._inductor.config as inductor_config
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
+
+# FlexAttention's compiled GEMMs otherwise hit "NoValidChoicesError: No choices exist
+# for backend" on this box (sm_120 + triton 3.6, empty inductor cache): make sure the
+# ATEN fallback is always an eligible autotune choice.
+inductor_config.max_autotune_gemm_backends = "ATEN,TRITON"
+inductor_config.autotune_fallback_to_aten = True
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -40,10 +47,13 @@ def main() -> None:
         cfg.update(json.loads(Path(args.config).read_text()))
 
     tok = AutoTokenizer.from_pretrained(cfg["model"])
-    # flex_attention: sdpa can't run packed block-diagonal masks on its flash path at
-    # 32k (falls to the O(n²) math kernel — measured 182s/step); flex handles them.
+    # Packed 32k training needs varlen attention: sdpa falls back to the O(n²) math
+    # kernel on block-diagonal masks (182s/step), and flex_attention dies on this box
+    # when a packed batch hits its decode path (NoValidChoicesError at step 22).
+    # Prebuilt FA2 from the kernels hub is what TRL's packing path actually supports.
     model = AutoModelForCausalLM.from_pretrained(
-        cfg["model"], torch_dtype="bfloat16", attn_implementation="flex_attention"
+        cfg["model"], torch_dtype="bfloat16",
+        attn_implementation=cfg.get("attn", "kernels-community/flash-attn2"),
     )
 
     ds = load_dataset(
