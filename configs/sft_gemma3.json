@@ -1,0 +1,6 @@
+{
+  "model": "google/gemma-3-1b-it",
+  "out": "/home/luigi/meeting-summarizer/train/out/gemma3-1b-voxsum",
+  "grad_accum": 2,
+  "lr": 1e-5
+}
