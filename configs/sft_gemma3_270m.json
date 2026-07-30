@@ -2,6 +2,7 @@
   "model": "google/gemma-3-270m-it-qat-q4_0-unquantized",
   "out": "/home/luigi/meeting-summarizer/train/out/gemma3-270m-voxsum",
   "grad_accum": 2,
-  "lr": 2e-5,
-  "epochs": 3
+  "lr": 2e-05,
+  "epochs": 3,
+  "best_model": false
 }

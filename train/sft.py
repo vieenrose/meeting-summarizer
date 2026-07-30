@@ -101,8 +101,11 @@ def main() -> None:
         save_strategy="steps",
         save_steps=200,
         save_total_limit=1,  # disk is critically tight on this box
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
+        # Gemma-3 + packed eval yields NaN eval_loss (an eval chunk can contain no
+        # unmasked completion tokens). A NaN metric silently pins "best" to the FIRST
+        # checkpoint, so best-model loading must be opt-in per model.
+        load_best_model_at_end=cfg.get("best_model", True),
+        metric_for_best_model="eval_loss" if cfg.get("best_model", True) else None,
         gradient_checkpointing=True,
         # 151k vocab × 32k positions of bf16 logits ≈ 10GB (+grad) — liger's fused CE
         # never materializes them; without it 32k-seq training OOMs even at bs=1
