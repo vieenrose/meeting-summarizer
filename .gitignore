@@ -1,0 +1,20 @@
+# reference clones of other repos — not part of this project
+/VoxSumDroid/
+/ai-edge-torch/
+
+# environments
+.venv/
+*/.venv/
+__pycache__/
+
+# datasets & generated artifacts (too large / reproducible via the pipeline)
+/data/raw/
+/data/normalized/
+/data/sft/
+/distill/targets*.jsonl
+/train/out/
+/export/out/
+
+# logs
+*.log
+nohup.out

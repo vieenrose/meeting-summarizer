@@ -1,0 +1,29 @@
+[project]
+name = "meeting-summarizer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.14.0",
+    "datasets>=5.0.1",
+    "liger-kernel>=0.8.1",
+    "nvidia-cudnn-cu12==9.19.0.56",
+    "nvidia-cusparselt-cu12==0.7.1",
+    "nvidia-nccl-cu12==2.28.9",
+    "nvidia-nvshmem-cu12==3.4.5",
+    "openai>=2.50.0",
+    "opencc>=1.4.1",
+    "protobuf>=7.35.1",
+    "sentencepiece>=0.2.2",
+    # cu128 builds: the box's driver is CUDA 12.8 — cu130 wheels fail to init
+    "torch==2.11.0+cu128",
+    "transformers>=5.14.1",
+    "trl>=1.9.2",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

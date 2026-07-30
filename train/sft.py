@@ -1,0 +1,113 @@
+"""Full-parameter SFT of Qwen3-0.6B on the VoxSum task suite.
+
+Launch (GPU 1 only — GPU 0 is reserved):
+  CUDA_VISIBLE_DEVICES=1 uv run python train/sft.py [--config configs/sft.json]
+
+Targets are teacher completions; loss on assistant tokens only. The chat template is
+applied with enable_thinking=False so the assistant turn carries Qwen3's empty
+<think></think> prefix — matching what the .litertlm bundle's embedded template expects
+at inference.
+"""
+import argparse
+import json
+from pathlib import Path
+
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import SFTConfig, SFTTrainer
+
+ROOT = Path(__file__).resolve().parent.parent
+
+DEFAULTS = {
+    "model": "Qwen/Qwen3-0.6B",
+    "out": str(ROOT / "train/out/qwen3-0.6b-voxsum"),
+    # single-pass hour-long transcripts: zh-TW hour ≈ 26k tokens -> native 32k max
+    "max_len": 32768,
+    "lr": 1.5e-5,
+    "epochs": 2,
+    "per_device_bs": 1,
+    "grad_accum": 4,
+    "warmup_ratio": 0.03,
+}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None)
+    args = ap.parse_args()
+    cfg = dict(DEFAULTS)
+    if args.config:
+        cfg.update(json.loads(Path(args.config).read_text()))
+
+    tok = AutoTokenizer.from_pretrained(cfg["model"])
+    # flex_attention: sdpa can't run packed block-diagonal masks on its flash path at
+    # 32k (falls to the O(n²) math kernel — measured 182s/step); flex handles them.
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg["model"], torch_dtype="bfloat16", attn_implementation="flex_attention"
+    )
+
+    ds = load_dataset(
+        "json",
+        data_files={
+            "train": str(ROOT / "data/sft/train.jsonl"),
+            "val": str(ROOT / "data/sft/val.jsonl"),
+        },
+    )
+
+    # prompt/completion conversational format: TRL masks the prompt tokens by
+    # construction (Qwen3's chat template lacks the {% generation %} tag that
+    # assistant_only_loss needs). The assistant turn carries no <think> block — the
+    # .litertlm bundle's bare template means the model must answer directly.
+    def to_prompt_completion(ex):
+        return {"prompt": ex["messages"][:-1], "completion": ex["messages"][-1:]}
+
+    ds = ds.map(to_prompt_completion, num_proc=8)
+    ds = ds.remove_columns([c for c in ds["train"].column_names
+                            if c not in ("prompt", "completion")])
+    # full val (5k packed rows) costs ~5 min/eval — a fixed 1k subsample tracks the
+    # same curve at 1/5 the cost; final model selection re-runs the full eval anyway
+    ds["val"] = ds["val"].shuffle(seed=0).select(range(1024))
+
+    sft_cfg = SFTConfig(
+        output_dir=cfg["out"],
+        max_length=cfg["max_len"],
+        num_train_epochs=cfg["epochs"],
+        per_device_train_batch_size=cfg["per_device_bs"],
+        per_device_eval_batch_size=cfg["per_device_bs"],
+        gradient_accumulation_steps=cfg["grad_accum"],
+        learning_rate=cfg["lr"],
+        lr_scheduler_type="cosine",
+        warmup_ratio=cfg["warmup_ratio"],
+        bf16=True,
+        # pack short examples into full 32k windows (median example ~1.7k tokens —
+        # unpacked, the GPU is mostly padding and 2 epochs take ~10h instead of ~3h)
+        packing=True,
+        logging_steps=10,
+        eval_strategy="steps",
+        eval_steps=200,
+        save_strategy="steps",
+        save_steps=200,
+        save_total_limit=1,  # disk is critically tight on this box
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        gradient_checkpointing=True,
+        # 151k vocab × 32k positions of bf16 logits ≈ 10GB (+grad) — liger's fused CE
+        # never materializes them; without it 32k-seq training OOMs even at bs=1
+        use_liger_kernel=True,
+        report_to="none",
+        dataset_num_proc=8,
+    )
+    trainer = SFTTrainer(
+        model=model,
+        args=sft_cfg,
+        train_dataset=ds["train"],
+        eval_dataset=ds["val"],
+        processing_class=tok,
+    )
+    trainer.train()
+    trainer.save_model(cfg["out"] + "/final")
+    tok.save_pretrained(cfg["out"] + "/final")
+
+
+if __name__ == "__main__":
+    main()
