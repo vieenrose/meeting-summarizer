@@ -1,14 +1,13 @@
 # VoxSumDroid registry entry — voxsum-qwen3-0.6b v1
 
-Add to `LlmRegistry.ALL` (after uploading the bundle to HF; URL below assumes repo
-`Luigi/voxsum-qwen3-0.6b-litertlm`, pin the exact revision hash after upload):
+Add to `LlmRegistry.ALL` (uploaded: https://huggingface.co/Luigi/voxsum-qwen3-0.6b-litertlm, revision pinned):
 
 ```kotlin
 LlmSpec(
     id = "voxsum-qwen3-0.6b-litertlm",
     displayName = "VoxSum Qwen3 0.6B (meeting fine-tune)",
-    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/<REVISION>/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
-    sha256 = "b83506ebe7606adb8dbf99905e54cc1d3848fef206c00b114f8bb0197e9d1038",
+    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/c0740a19d736c0cf4a2a9ff6082a5b3718d75ea2/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
+    sha256 = "5fa8e11fd9955c39512a25a24c686f42483ebb7059ba30f1d3c218bacdcd5b98",
     sizeBytes = 664_413_600L,
     fileName = "voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
     chatTemplate = ChatTemplate.NONE,   // bundle carries qwen3 template metadata
