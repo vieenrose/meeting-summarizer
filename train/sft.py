@@ -1,7 +1,10 @@
 """Full-parameter SFT of Qwen3-0.6B on the VoxSum task suite.
 
-Launch (GPU 1 only — GPU 0 is reserved):
-  CUDA_VISIBLE_DEVICES=1 uv run python train/sft.py [--config configs/sft.json]
+Launch on both GPUs (halve grad_accum so the effective batch — and therefore the LR
+schedule and step count — matches the single-GPU recipe):
+  uv run torchrun --nproc_per_node=2 train/sft.py --config configs/sft_ddp.json
+Single GPU:
+  CUDA_VISIBLE_DEVICES=1 uv run python train/sft.py
 
 Targets are teacher completions; loss on assistant tokens only. The chat template is
 applied with enable_thinking=False so the assistant turn carries Qwen3's empty
