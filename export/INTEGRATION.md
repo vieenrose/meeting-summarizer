@@ -26,8 +26,8 @@ summarization and insight extraction over VoxSum transcript-format-v1 input, in
 LlmSpec(
     id = "voxsum-qwen3-0.6b-litertlm",
     displayName = "VoxSum Qwen3 0.6B (meeting fine-tune)",
-    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/<REVISION>/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
-    sha256 = "<SHA256>",
+    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/7774888d3093a0ab07ef518e48284669eeac843a/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
+    sha256 = "660436ac918f61f7fddffc419abf561b396585d115382efb8247814ac9382b9a",
     sizeBytes = 664_413_600L,
     fileName = "voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
     chatTemplate = ChatTemplate.NONE,
@@ -139,7 +139,7 @@ Improvements (held-out eval, teacher-judged):
 - cross-lingual **output-language compliance 0.38 → 0.98** — the base model silently
   answered in the transcript's language 62 % of the time when a target language was set
 - action items coverage 1.90 → 3.94 (of 5), open questions 2.90 → 4.10
-- executive summary faithfulness 3.65 → 3.48 …/ coverage 3.58 → 3.88
+- executive summary coverage 3.58 → 3.88 (faithfulness 3.65 → 3.48, roughly par)
 
 Known limits, please surface honestly in the UI:
 

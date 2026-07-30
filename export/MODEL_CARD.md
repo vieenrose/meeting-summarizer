@@ -35,6 +35,9 @@ output in …"). Prompts must follow the VoxSumDroid templates the model was tra
 
 ## Training
 
+v2 (2026-07-30) adds the single-call structured NOTES task (TITLE/SUMMARY/DECISIONS/
+ACTIONS/OPEN/TOPICS — see docs/OUTPUT-FORMAT.md).
+
 Distilled from Qwen3.5-9B over 3,891 meetings (QMSum, MeetingBank, DialogSum,
 VCSum→OpenCC s2twp; 60k filtered prompt/completion pairs), full-parameter SFT,
 seq 32768 packed, 2 epochs. Details + eval: training repo `eval/REPORT.md`.
@@ -44,9 +47,10 @@ seq 32768 packed, 2 epochs. Details + eval: training repo `eval/REPORT.md`.
 | metric | base | fine-tune |
 |---|---|---|
 | cross-lingual output-language compliance | 0.38 | **0.98** |
-| action items coverage (1-5) | 1.90 | **3.44** |
-| open questions faith / cover | 3.96 / 2.90 | **4.48 / 3.96** |
-| known limit: en→zh-TW hour-long faithfulness | 3.73* | 2.29 |
+| action items coverage (1-5) | 1.90 | **3.94** |
+| open questions faith / cover | 3.96 / 2.90 | **4.42 / 4.10** |
+| structured NOTES format compliance (native / cross) | n/a | **1.00 / 0.94** |
+| known limit: en→zh-TW hour-long faithfulness | 3.73* | ~2.5 |
 
 \* base scores "faithful" largely by *not translating* (wrong language 62% of the time).
 
@@ -54,7 +58,8 @@ seq 32768 packed, 2 epochs. Details + eval: training repo `eval/REPORT.md`.
 
 ## Files
 
-- `voxsum-qwen3-0.6b_q8_ekv32768.litertlm` — 664MB, kv 32768
-  sha256 `5fa8e11fd9955c39512a25a24c686f42483ebb7059ba30f1d3c218bacdcd5b98`
+- `voxsum-qwen3-0.6b_q8_ekv32768.litertlm` — 664MB, kv 32768 (v2)
+  sha256 `660436ac918f61f7fddffc419abf561b396585d115382efb8247814ac9382b9a`
+- `checkpoint/` — HF-format safetensors of the same fine-tune (for reuse / reconversion)
 
 RAM note: full 32k KV ≈ 3-3.7GB fp16 on-device — cap `nCtx` lower on small devices.

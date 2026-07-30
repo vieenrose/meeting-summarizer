@@ -6,8 +6,8 @@ Add to `LlmRegistry.ALL` (uploaded: https://huggingface.co/Luigi/voxsum-qwen3-0.
 LlmSpec(
     id = "voxsum-qwen3-0.6b-litertlm",
     displayName = "VoxSum Qwen3 0.6B (meeting fine-tune)",
-    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/c0740a19d736c0cf4a2a9ff6082a5b3718d75ea2/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
-    sha256 = "5fa8e11fd9955c39512a25a24c686f42483ebb7059ba30f1d3c218bacdcd5b98",
+    url = "$HF/Luigi/voxsum-qwen3-0.6b-litertlm/resolve/7774888d3093a0ab07ef518e48284669eeac843a/voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
+    sha256 = "660436ac918f61f7fddffc419abf561b396585d115382efb8247814ac9382b9a",
     sizeBytes = 664_413_600L,
     fileName = "voxsum-qwen3-0.6b_q8_ekv32768.litertlm",
     chatTemplate = ChatTemplate.NONE,   // bundle carries qwen3 template metadata
