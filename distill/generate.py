@@ -120,6 +120,16 @@ async def run_actions(out, meeting, variant, transcript, tgt):
     rec(out, meeting, variant, "actions", "single", p, a, tgt=tgt)
 
 
+async def run_notes(out, meeting, variant, transcript, tgt):
+    zh = (tgt or meeting["lang"]) == "zh-TW"
+    clause = "" if tgt is None else T.lang_clause(T.TARGET_LANG[tgt])
+    p = T.NOTES_TEMPLATE_ZH % transcript if zh else T.NOTES_TEMPLATE % (clause, transcript)
+    if not fits(p, T.NOTES_MAX_TOKENS):
+        return "skip"
+    a = await chat(p, T.NOTES_MAX_TOKENS)
+    rec(out, meeting, variant, "notes", "single", p, a, tgt=tgt)
+
+
 async def run_insight(out, meeting, variant, transcript, task_name, tgt):
     en_p, zh_p, max_tok = T.INSIGHT_TASKS[task_name]
     zh = (tgt or meeting["lang"]) == "zh-TW"
@@ -156,6 +166,10 @@ def plan_variants(meeting, rng):
     for t in rng.sample(list(T.INSIGHT_TASKS), k=4):
         variants.append({"kind": "insight", "task": t, "spk": rng.choice(spk_kinds),
                          "tgt": rng.choice([None, None, cross])})
+    # v2 NOTES: every meeting once natively + a second cross-lingual/native draw
+    variants.append({"kind": "notes", "spk": rng.choice(spk_kinds), "tgt": None})
+    variants.append({"kind": "notes", "spk": rng.choice(spk_kinds),
+                     "tgt": rng.choice([None, cross])})
     return variants
 
 
@@ -180,6 +194,8 @@ async def process_meeting(out, meeting, done, skipped):
                                         v["zh_instr"], v["instr"])
             elif v["kind"] == "actions":
                 r = await run_actions(out, meeting, key, transcript, v["tgt"])
+            elif v["kind"] == "notes":
+                r = await run_notes(out, meeting, key, transcript, v["tgt"])
             else:
                 r = await run_insight(out, meeting, key, transcript, v["task"], v["tgt"])
             if r == "skip":

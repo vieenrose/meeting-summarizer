@@ -1,4 +1,42 @@
-# Summarizer output format (v1)
+# Summarizer output format
+
+## v2: structured meeting notes (the NOTES task)
+
+One call → one complete note (LFM2-2.6B-Transcript-inspired, but single-pass instead of
+six calls). Fixed **ASCII section keys** so parsing is locale-independent; the *content*
+is in the transcript's (or requested target) language.
+
+```
+TITLE: <one line, ≤ 8 words>
+SUMMARY:
+- 3-5 short bullets
+DECISIONS:
+- key decisions made
+ACTIONS:
+- <owner>: <task> (期限/due: <deadline>)
+OPEN:
+- open questions / follow-ups
+TOPICS:
+- main topics discussed
+```
+
+Rules:
+
+- Section keys `TITLE: SUMMARY: DECISIONS: ACTIONS: OPEN: TOPICS:` appear at
+  start-of-line, uppercase ASCII, **always in this order**, always all present.
+- `TITLE:` content is inline on the same line; every other section's content is `- `
+  bullets on the following lines.
+- An empty section contains exactly one line `-` (same canonical marker as v1).
+- `ACTIONS` bullet grammar: `- <owner>: <task>` with optional ` (due: …)` en /
+  ` (期限: …)` zh. Owner is the speaker label/name as it appears in the transcript.
+- No markdown beyond the `- ` bullets; blank lines between sections are permitted and
+  ignored by parsers.
+- Parse rule: a new section starts at a line matching `^[A-Z]+:`; everything until the
+  next key line belongs to the current section. Unknown keys: preserve as opaque text.
+- The app renders localized headers itself (摘要/決策/行動項目/…) — keys are wire
+  format, not UI text.
+
+## v1: per-task outputs
 
 What `voxsum-qwen3-0.6b` is trained to emit, per task. Counterpart to VoxSumDroid's
 `TRANSCRIPT-FORMAT.md` (input side). "Trained" means high-probability behavior of a

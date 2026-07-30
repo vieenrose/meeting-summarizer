@@ -71,9 +71,42 @@ def normalize(c: str) -> str:
     return re.sub(r"[ \t]+$", "", c, flags=re.MULTILINE).strip()
 
 
+NOTES_KEYS = ["TITLE:", "SUMMARY:", "DECISIONS:", "ACTIONS:", "OPEN:", "TOPICS:"]
+# teacher failure mode: echoing the template placeholder / "none" instead of "-"
+NOTES_PLACEHOLDER = re.compile(
+    r"owner: task|name: what they|due: deadline|負責人[:：]\s*(工作內容|無)|"
+    r"期限[:：]\s*(無|沒有)|^- (none|n/a|無|沒有)[。.]?$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def notes_ok(c: str) -> bool:
+    """Strict wire-format check for the v2 NOTES task (docs/OUTPUT-FORMAT.md)."""
+    if NOTES_PLACEHOLDER.search(c):
+        return False
+    lines = [l for l in c.split("\n") if l.strip()]
+    if not lines or not lines[0].startswith("TITLE:"):
+        return False
+    title = lines[0][6:].strip()
+    if not title or len(title) > 90 or len(title.split()) > 10:
+        return False
+    keys = [l.split()[0] for l in lines if re.match(r"^[A-Z]+:", l)]
+    if keys != NOTES_KEYS:
+        return False
+    for l in lines[1:]:
+        if re.match(r"^[A-Z]+:", l):
+            if l.split(":", 1)[1].strip():   # only TITLE carries inline content
+                return False
+        elif not (l.startswith("- ") or l.strip() == "-"):
+            return False
+    return True
+
+
 def keep(d: dict) -> bool:
     c = d["completion"]
     if not c or len(c) > 2600:
+        return False
+    if d["task"] == "notes" and not notes_ok(c):
         return False
     if BAD_PATTERNS.search(c):
         return False

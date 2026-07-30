@@ -122,6 +122,41 @@ USER_INSTRUCTIONS_ZH = [
     "請摘要討論內容，聚焦在結論與成果。",
 ]
 
+# ------------------------------------------------------- family C: structured NOTES
+# One-pass structured meeting note (docs/OUTPUT-FORMAT.md v2). ASCII section keys are
+# wire format; content language follows the transcript / target-language clause.
+NOTES_TEMPLATE = (
+    "Analyze the meeting transcript below and write structured meeting notes in EXACTLY "
+    "this format:\n"
+    "TITLE: one short title (at most 8 words)\n"
+    "SUMMARY:\n- 3-5 short bullet points (each under 20 words)\n"
+    "DECISIONS:\n- the key decisions made\n"
+    "ACTIONS:\n- one bullet per assigned action, written as \"name: what they will do\"; "
+    "append \"(due: ...)\" only when a deadline was actually stated\n"
+    "OPEN:\n- open questions and follow-ups\n"
+    "TOPICS:\n- the main topics discussed\n"
+    "Keep the section keys exactly as shown (TITLE, SUMMARY, DECISIONS, ACTIONS, OPEN, "
+    "TOPICS), in that order, always all present. If a section has nothing, its content "
+    "must be exactly \"-\" on one line — never a placeholder, never \"none\". Use \"- \" "
+    "bullets, plain text only — no markdown headings, no preamble, no commentary.%s"
+    "\n\nTranscript:\n%s"
+)
+NOTES_TEMPLATE_ZH = (
+    "請分析以下會議逐字稿，並以「完全相同」的格式輸出結構化會議記錄：\n"
+    "TITLE: 一個簡短標題（8 個字以內）\n"
+    "SUMMARY:\n- 3-5 點簡短重點（每點 20 字以內）\n"
+    "DECISIONS:\n- 會議做成的關鍵決策\n"
+    "ACTIONS:\n- 每項被指派的行動一點，寫成「某人: 要做的事」；只有明確提到期限時"
+    "才在後面加上（期限: …）\n"
+    "OPEN:\n- 未解決的問題與待追蹤事項\n"
+    "TOPICS:\n- 討論的主要議題\n"
+    "區段鍵字（TITLE、SUMMARY、DECISIONS、ACTIONS、OPEN、TOPICS）必須完全照抄、"
+    "依此順序、全部出現。若某區段沒有內容，該行只寫「-」——絕不要寫佔位文字、"
+    "「無」或「沒有」。使用「- 」條列，純文字——不要 Markdown 標題、不要前言、"
+    "不要評論。\n\n逐字稿:\n%s"
+)
+NOTES_MAX_TOKENS = 640
+
 # ---------------------------------------------------------------- family B: insights
 # Fixed task prompts (en / zh-TW). {t} = transcript. Output plain bullets/text — the app
 # renders raw text. Each entry: (prompt_en, prompt_zh, max_tokens)
