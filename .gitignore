@@ -19,3 +19,7 @@ __pycache__/
 *.log
 nohup.out
 /export/ckpt-materialized/
+/export/out*/
+/export/q4work/
+*.tflite
+*.litertlm

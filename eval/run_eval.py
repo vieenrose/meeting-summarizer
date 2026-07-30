@@ -158,11 +158,17 @@ async def main():
     ap.add_argument("--out", required=True)
     # "plain" = bare nucleus sampling; "app" = Qwen3 non-thinking profile the registry
     # entry will ship (repetition control matters for cross-lingual on a 0.6B)
-    ap.add_argument("--sampler", choices=["plain", "app"], default="plain")
+    # "greedy" tests the hypothesis that sampling itself causes fabrication on a 0.6B:
+    # temperature invents alternatives to what the transcript actually says.
+    ap.add_argument("--sampler", choices=["plain", "app", "greedy"], default="plain")
     args = ap.parse_args()
-    args.sampler = ({"temperature": 0.7, "top_p": 0.9} if args.sampler == "plain" else
-                    {"temperature": 0.7, "top_p": 0.8,
-                     "extra_body": {"top_k": 20, "presence_penalty": 1.0}})
+    args.sampler = {
+        "plain": {"temperature": 0.7, "top_p": 0.9},
+        "app": {"temperature": 0.7, "top_p": 0.8,
+                "extra_body": {"top_k": 20, "presence_penalty": 1.0}},
+        "greedy": {"temperature": 0.0,
+                   "extra_body": {"top_k": 1, "presence_penalty": 1.0}},
+    }[args.sampler]
 
     students = AsyncOpenAI(base_url=args.student_url, api_key="x")
     judge_c = AsyncOpenAI(base_url=args.judge_url, api_key="x")

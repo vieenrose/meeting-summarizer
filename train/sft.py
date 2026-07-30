@@ -12,6 +12,7 @@ applied with enable_thinking=False so the assistant turn carries Qwen3's empty
 at inference.
 """
 import argparse
+import sys
 import json
 from pathlib import Path
 
@@ -27,6 +28,7 @@ inductor_config.max_autotune_gemm_backends = "ATEN,TRITON"
 inductor_config.autotune_fallback_to_aten = True
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 DEFAULTS = {
     "model": "Qwen/Qwen3-0.6B",
@@ -50,14 +52,25 @@ def main() -> None:
         cfg.update(json.loads(Path(args.config).read_text()))
 
     tok = AutoTokenizer.from_pretrained(cfg["model"])
+
+    # QAT: train against deployment numerics (TQ3 KV cache + int4-block32 weights) so
+    # the model absorbs quantization error instead of meeting it at export time.
+    attn_impl = cfg.get("attn", "kernels-community/flash-attn2")
     # Packed 32k training needs varlen attention: sdpa falls back to the O(n²) math
     # kernel on block-diagonal masks (182s/step), and flex_attention dies on this box
     # when a packed batch hits its decode path (NoValidChoicesError at step 22).
     # Prebuilt FA2 from the kernels hub is what TRL's packing path actually supports.
     model = AutoModelForCausalLM.from_pretrained(
-        cfg["model"], torch_dtype="bfloat16",
-        attn_implementation=cfg.get("attn", "kernels-community/flash-attn2"),
+        cfg["model"], torch_dtype="bfloat16", attn_implementation=attn_impl,
     )
+    if cfg.get("qat_weight_bits") == 4:
+        from train.qat import fake_quant_weights_
+        n = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32))
+        print(f"[qat] int4-block{cfg.get('qat_block_size', 32)} fake-quant on {n} Linears")
+    if cfg.get("qat_kv_bits"):
+        from train.qat import install_kv_fake_quant
+        how = install_kv_fake_quant(model, cfg["qat_kv_bits"])
+        print(f"[qat] TQ KV fake-quant at {cfg['qat_kv_bits']} bits: {how}")
 
     ds = load_dataset(
         "json",

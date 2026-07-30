@@ -1,0 +1,9 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "out": "/home/luigi/meeting-summarizer/train/out/qwen3-0.6b-voxsum-v3",
+  "grad_accum": 2,
+  "lr": 1e-5,
+  "qat_weight_bits": 4,
+  "qat_block_size": 32,
+  "qat_kv_bits": 4
+}

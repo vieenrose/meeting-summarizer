@@ -102,7 +102,20 @@ def notes_ok(c: str) -> bool:
     return True
 
 
+MIN_FAITH = 4   # judged targets below this are dropped (see distill/faith_filter.py)
+
+
 def keep(d: dict) -> bool:
+    # Faithfulness gate: v1/v2 trained on unjudged teacher output, and ~17% of it scored
+    # faith<=3 with outright polarity inversions in it. Training on those taught the
+    # student to invert. A judged record must clear the bar; unjudged records pass
+    # through so the pipeline still works before/without a judging run.
+    j = d.get("judge")
+    if j:
+        if j.get("invert"):
+            return False
+        if j.get("faith", 0) and j["faith"] < MIN_FAITH:
+            return False
     c = d["completion"]
     if not c or len(c) > 2600:
         return False
@@ -140,6 +153,11 @@ def main(*targets_paths: str) -> None:
         stats["total"] += 1
         if not keep(d):
             stats["filtered"] += 1
+            j = d.get("judge") or {}
+            if j.get("invert"):
+                stats["dropped_inverted"] += 1
+            elif j.get("faith", 0) and j["faith"] < MIN_FAITH:
+                stats["dropped_lowfaith"] += 1
             continue
         key = hash((d["prompt"], d["completion"]))
         if key in seen:
@@ -166,6 +184,9 @@ def main(*targets_paths: str) -> None:
 
 
 if __name__ == "__main__":
-    default = [str(HERE.parent / "distill/targets_single.jsonl"),
+    # judged file first: it carries the same records plus judge verdicts, and dedup
+    # keeps the first occurrence, so judged copies win over their unjudged twins
+    default = [str(HERE.parent / "distill/targets_judged.jsonl"),
+               str(HERE.parent / "distill/targets_single.jsonl"),
                str(HERE.parent / "distill/targets.jsonl")]
     main(*(sys.argv[1:] or default))

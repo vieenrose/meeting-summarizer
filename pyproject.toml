@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.14.0",
     "datasets>=5.0.1",
+    "flash-linear-attention>=0.5.2",
     "gguf>=0.19.0",
     "kernels>=0.15.2,<0.16",
     "liger-kernel>=0.8.1",
@@ -15,6 +16,7 @@ dependencies = [
     "openai>=2.50.0",
     "opencc>=1.4.1",
     "protobuf>=7.35.1",
+    "scipy>=1.18.0",
     "sentencepiece>=0.2.2",
     # cu128 builds: the box's driver is CUDA 12.8 — cu130 wheels fail to init
     "torch==2.11.0+cu128",
