@@ -63,10 +63,11 @@ def fmt_ok(task: str, out: str, lang: str) -> bool:
 
 
 async def gen(client, model, prompt, max_tokens, sampler):
+    sampler = dict(sampler)
+    extra = {"chat_template_kwargs": {"enable_thinking": False}, **sampler.pop("extra_body", {})}
     r = await client.chat.completions.create(
         model=model, messages=[{"role": "user", "content": prompt}],
-        max_tokens=max_tokens, extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        **sampler)
+        max_tokens=max_tokens, extra_body=extra, **sampler)
     return (r.choices[0].message.content or "").strip()
 
 
@@ -91,7 +92,7 @@ async def eval_meeting(students, judge_c, args, meeting, results):
         ("actions", None), ("title", None),
         ("exec_summary", None), ("open_questions", None),
     ]
-    sampler = {"temperature": 0.7, "top_p": 0.9}
+    sampler = dict(args.sampler)
     for task, tgt in cases:
         eff = tgt or lang
         zh_instr = eff == "zh-TW"
@@ -140,7 +141,13 @@ async def main():
     ap.add_argument("--judge", default="teacher")
     ap.add_argument("--n-per-source", type=int, default=12)
     ap.add_argument("--out", required=True)
+    # "plain" = bare nucleus sampling; "app" = Qwen3 non-thinking profile the registry
+    # entry will ship (repetition control matters for cross-lingual on a 0.6B)
+    ap.add_argument("--sampler", choices=["plain", "app"], default="plain")
     args = ap.parse_args()
+    args.sampler = ({"temperature": 0.7, "top_p": 0.9} if args.sampler == "plain" else
+                    {"temperature": 0.7, "top_p": 0.8,
+                     "extra_body": {"top_k": 20, "presence_penalty": 1.0}})
 
     students = AsyncOpenAI(base_url=args.student_url, api_key="x")
     judge_c = AsyncOpenAI(base_url=args.judge_url, api_key="x")

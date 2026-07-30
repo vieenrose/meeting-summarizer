@@ -3,7 +3,7 @@
 # GPU 1 ONLY (GPU 0 reserved). 4 slots × 32k context; big ubatch for fast prefill of
 # hour-long transcripts. OpenAI-compatible API on :8088.
 set -euo pipefail
-MODEL=$(ls ~/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/*/*Q6_K*.gguf | head -1)
+MODEL=$(ls ~/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/*/*Q4_K_M*.gguf | head -1)
 export CUDA_VISIBLE_DEVICES=1
 exec ~/llama.cpp/build/bin/llama-server \
   -m "$MODEL" \
