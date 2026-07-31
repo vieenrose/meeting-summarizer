@@ -117,6 +117,8 @@ async def main():
     ap.add_argument("--n-prompts", type=int, default=4000)
     ap.add_argument("--k", type=int, default=4)
     ap.add_argument("--parallel", type=int, default=6)
+    ap.add_argument("--min-tokens", type=int, default=0,
+                    help="only prompts whose transcript is at least this many tokens")
     args = ap.parse_args()
 
     rows = []
@@ -128,6 +130,9 @@ async def main():
         key = (d["meeting_id"], d["task"])
         if key in seen:
             continue
+        if args.min_tokens:
+            if len(tok.encode(transcript_of(d["prompt"]))) < args.min_tokens:
+                continue
         seen.add(key)
         rows.append({k: d[k] for k in ("prompt", "task", "lang", "meeting_id")})
     random.Random(0).shuffle(rows)
