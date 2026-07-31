@@ -39,9 +39,13 @@ def fits(prompt: str, out_tokens: int) -> bool:
 JUDGE_TMPL = """You are grading a meeting-notes model. Given a transcript (possibly truncated) and the model's output for the task "{task}", rate:
 FAITH: 1-5 — everything in the output is supported by the transcript (5 = no inventions at all)
 COVER: 1-5 — the output captures the most important content for the task (5 = nothing important missed)
+INVERT: YES or NO — does the output state the OPPOSITE of the transcript about any decision,
+approval, outcome or commitment (e.g. "approved"/"agreed"/"done" when the transcript says
+rejected, postponed, pending or failed)? This is the most damaging error class, judge it strictly.
 Answer in exactly this format:
 FAITH: <n>
 COVER: <n>
+INVERT: <YES or NO>
 
 Transcript:
 {transcript}
@@ -84,7 +88,9 @@ async def judge(client, model, task, transcript, output):
     r = await gen(client, model, p, 64, {"temperature": 0.0})
     f = re.search(r"FAITH:\s*(\d)", r)
     c = re.search(r"COVER:\s*(\d)", r)
-    return (int(f.group(1)) if f else 0, int(c.group(1)) if c else 0)
+    v = re.search(r"INVERT:\s*(YES|NO)", r, re.I)
+    return (int(f.group(1)) if f else 0, int(c.group(1)) if c else 0,
+            bool(v and v.group(1).upper() == "YES"))
 
 
 async def eval_meeting(students, judge_c, args, meeting, results):
@@ -140,10 +146,13 @@ async def eval_meeting(students, judge_c, args, meeting, results):
                 ref = transcript
             l_ok = lang_ok(eff, out) if out else False
             f_ok = fmt_ok(task, out, eff)
-            fa, co = await judge(judge_c, args.judge, task, ref, out) if out else (0, 0)
+            fa, co, inv = await judge(judge_c, args.judge, task, ref, out) if out else (0, 0, False)
             results.append({"meeting": meeting["id"], "src_lang": lang, "task": task,
                             "tgt": tgt, "lang_ok": l_ok, "fmt_ok": f_ok,
-                            "faith": fa, "cover": co, "output": out[:400]})
+                            "faith": fa, "cover": co, "invert": inv,
+                            # transcript length drives hallucination — stratify on it
+                            "ntok": len(_tok.encode(ref)),
+                            "output": out[:400]})
         except Exception as e:
             results.append({"meeting": meeting["id"], "task": task, "tgt": tgt, "error": str(e)})
 
@@ -199,7 +208,22 @@ async def main():
             "fmt_ok": round(sum(r["fmt_ok"] for r in rs) / len(rs), 3),
             "faith": round(sum(r["faith"] for r in rs) / len(rs), 2),
             "cover": round(sum(r["cover"] for r in rs) / len(rs), 2),
+            # the tail is what users feel; a good mean hid a 34% bad-output rate in v2
+            "faith_le2": round(sum(r["faith"] <= 2 for r in rs) / len(rs), 3),
+            "invert": round(sum(bool(r.get("invert")) for r in rs) / len(rs), 3),
         }
+    # long-document stratification: hallucination scales with transcript length
+    buckets = [(0, 4000, "short"), (4000, 12000, "medium"), (12000, 10**9, "long")]
+    agg["_by_length"] = {}
+    for lo, hi, name in buckets:
+        rs = [r for r in ok if lo <= r.get("ntok", 0) < hi]
+        if rs:
+            agg["_by_length"][name] = {
+                "n": len(rs),
+                "faith": round(sum(r["faith"] for r in rs) / len(rs), 2),
+                "faith_le2": round(sum(r["faith"] <= 2 for r in rs) / len(rs), 3),
+                "invert": round(sum(bool(r.get("invert")) for r in rs) / len(rs), 3),
+            }
     Path(args.out).write_text(json.dumps({"agg": agg, "results": results}, ensure_ascii=False, indent=1))
     print(json.dumps(agg, indent=2))
 
