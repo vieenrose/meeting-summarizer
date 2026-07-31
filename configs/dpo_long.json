@@ -1,0 +1,13 @@
+{
+  "model": "/home/luigi/meeting-summarizer/train/out/qwen35-0.8b-voxsum-q4-kvf16/final",
+  "out": "/home/luigi/meeting-summarizer/train/out/qwen35-0.8b-voxsum-final",
+  "pairs": "/home/luigi/meeting-summarizer/data/dpo/long_pairs.jsonl",
+  "max_len": 12288,
+  "max_prompt_len": 31000,
+  "lr": 5e-07,
+  "beta": 0.1,
+  "epochs": 1,
+  "grad_accum": 16,
+  "qat_weight_bits": 4,
+  "qat_block_size": 32
+}

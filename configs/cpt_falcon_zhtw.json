@@ -1,0 +1,11 @@
+{
+  "model": "/home/luigi/meeting-summarizer/train/out/falcon-zhtw-base",
+  "out": "/home/luigi/meeting-summarizer/train/out/falcon-zhtw-cpt",
+  "cpt_data": "/home/luigi/meeting-summarizer/data/cpt/zhtw.jsonl",
+  "max_len": 8192,
+  "grad_accum": 2,
+  "lr": 5e-5,
+  "epochs": 1,
+  "best_model": false,
+  "in_train_eval": false
+}

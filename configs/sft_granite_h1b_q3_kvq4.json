@@ -1,0 +1,13 @@
+{
+  "model": "ibm-granite/granite-4.0-h-1b",
+  "out": "/home/luigi/meeting-summarizer/train/out/granite-h1b-voxsum-q3-kvq4",
+  "attn": "flash_attention_2",
+  "grad_accum": 2,
+  "lr": 1e-05,
+  "best_model": false,
+  "qat_weight_bits": 3,
+  "qat_block_size": 32,
+  "qat_kv_bits": 4,
+  "max_len": 12288,
+  "in_train_eval": false
+}

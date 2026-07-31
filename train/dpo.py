@@ -71,8 +71,7 @@ def main() -> None:
         model=model,
         args=DPOConfig(
             output_dir=cfg["out"],
-            max_length=cfg["max_len"],
-            max_prompt_length=cfg["max_prompt_len"],
+            max_length=cfg["max_len"],   # TRL v1.9 dropped max_prompt_length
             num_train_epochs=cfg["epochs"],
             per_device_train_batch_size=cfg["per_device_bs"],
             gradient_accumulation_steps=cfg["grad_accum"],
@@ -81,6 +80,12 @@ def main() -> None:
             lr_scheduler_type="cosine",
             warmup_ratio=0.1,
             bf16=True,
+            # 248k vocab x 32k positions of logits, for chosen AND rejected AND the
+            # reference model, is ~32GB per forward. Liger's fused path never
+            # materializes them; precomputing reference log-probs drops the ref model
+            # from the training loop entirely.
+            use_liger_kernel=True,   # fused DPO loss; mutually exclusive with
+                                     # precompute_ref_log_probs in TRL v1.9
             logging_steps=5,
             save_strategy="no",
             gradient_checkpointing=True,

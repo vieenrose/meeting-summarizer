@@ -63,6 +63,22 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         cfg["model"], torch_dtype="bfloat16", attn_implementation=attn_impl,
     )
+    # granite-4.0-h-1b is DENSE (num_experts=0) but still enters the MoE aux-loss
+    # branch, where load_balancing_loss_func returns a plain int 0 and the model does
+    # `aux_loss.to(loss.device)`. Returning a tensor instead just moves the failure to
+    # DDP ("Tensors must be CUDA and dense"), so skip the branch outright: with no
+    # experts there is nothing to balance.
+    if model.config.model_type.startswith("granitemoehybrid"):
+        _cls = model.__class__
+        _orig_forward = _cls.forward
+
+        def _forward_no_router(self, *a, **kw):
+            kw["output_router_logits"] = False
+            return _orig_forward(self, *a, **kw)
+
+        _cls.forward = _forward_no_router
+        print("[fix] granite dense: MoE aux-loss branch disabled")
+
     if cfg.get("qat_weight_bits"):
         from train.qat import fake_quant_weights_
         c = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32),
@@ -74,13 +90,21 @@ def main() -> None:
         how = install_kv_fake_quant(model, cfg["qat_kv_bits"])
         print(f"[qat] TQ KV fake-quant at {cfg['qat_kv_bits']} bits: {how}")
 
-    ds = load_dataset(
-        "json",
-        data_files={
-            "train": str(ROOT / "data/sft/train.jsonl"),
-            "val": str(ROOT / "data/sft/val.jsonl"),
-        },
-    )
+    # CPT mode: plain language modelling over raw text. Used to settle the 14,912 zh-TW
+    # embeddings added by extend_tokenizer.py — in SFT the loss covers only completions,
+    # so tokens that appear mainly inside transcripts would never get direct gradient.
+    if cfg.get("cpt_data"):
+        ds = load_dataset("json", data_files={"train": cfg["cpt_data"]})
+        ds = ds.remove_columns([c for c in ds["train"].column_names if c != "text"])
+        cfg["in_train_eval"] = False
+    else:
+        ds = load_dataset(
+            "json",
+            data_files={
+                "train": cfg.get("train_file", str(ROOT / "data/sft/train.jsonl")),
+                "val": str(ROOT / "data/sft/val.jsonl"),
+            },
+        )
 
     # prompt/completion conversational format: TRL masks the prompt tokens by
     # construction (Qwen3's chat template lacks the {% generation %} tag that
@@ -89,12 +113,14 @@ def main() -> None:
     def to_prompt_completion(ex):
         return {"prompt": ex["messages"][:-1], "completion": ex["messages"][-1:]}
 
-    ds = ds.map(to_prompt_completion, num_proc=8)
-    ds = ds.remove_columns([c for c in ds["train"].column_names
-                            if c not in ("prompt", "completion")])
+    if not cfg.get("cpt_data"):
+        ds = ds.map(to_prompt_completion, num_proc=8)
+        ds = ds.remove_columns([c for c in ds["train"].column_names
+                                if c not in ("prompt", "completion")])
     # full val (5k packed rows) costs ~5 min/eval — a fixed 1k subsample tracks the
     # same curve at 1/5 the cost; final model selection re-runs the full eval anyway
-    ds["val"] = ds["val"].shuffle(seed=0).select(range(1024))
+    if not cfg.get("cpt_data"):
+        ds["val"] = ds["val"].shuffle(seed=0).select(range(1024))
 
     sft_cfg = SFTConfig(
         output_dir=cfg["out"],
@@ -111,7 +137,10 @@ def main() -> None:
         # unpacked, the GPU is mostly padding and 2 epochs take ~10h instead of ~3h)
         packing=True,
         logging_steps=10,
-        eval_strategy="steps",
+        # granitemoehybrid returns MoE output fields that are None; accelerate's
+        # gather_for_metrics then fails ("NoneType is not iterable"). These runs
+        # select on the downstream judged eval anyway, so in-training eval is optional.
+        eval_strategy="steps" if cfg.get("in_train_eval", True) else "no",
         eval_steps=200,
         save_strategy="steps",
         save_steps=200,
@@ -125,6 +154,10 @@ def main() -> None:
         # 151k vocab × 32k positions of bf16 logits ≈ 10GB (+grad) — liger's fused CE
         # never materializes them; without it 32k-seq training OOMs even at bs=1
         use_liger_kernel=True,
+        # TRL enables MoE aux-loss logging whenever the config looks MoE and
+        # router_aux_loss_coef != 0; granite-4.0-h-1b is dense, so it then gathers a
+        # None aux_loss and crashes. Zero the coefficient to turn that path off.
+        router_aux_loss_coef=cfg.get("router_aux_loss_coef", 0.0),
         report_to="none",
         dataset_num_proc=8,
     )
@@ -132,7 +165,7 @@ def main() -> None:
         model=model,
         args=sft_cfg,
         train_dataset=ds["train"],
-        eval_dataset=ds["val"],
+        eval_dataset=ds["val"] if cfg.get("in_train_eval", True) else None,
         processing_class=tok,
     )
     trainer.train()
