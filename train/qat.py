@@ -23,44 +23,59 @@ sys.path.insert(0, "/home/luigi/turboquant/turboquant")
 
 
 # --------------------------------------------------------------------- weights
-class _FakeQuantInt4Block(torch.autograd.Function):
-    """Symmetric int4, per block of `bs` along the input dim; STE backward."""
+class _FakeQuantBlock(torch.autograd.Function):
+    """Symmetric n-bit weight quantization, per block of `bs` along the input dim.
+
+    3-bit uses the [-4, 3] grid, 4-bit [-8, 7], 8-bit [-128, 127]. Straight-through
+    backward so the underlying high-precision weights keep learning.
+    """
 
     @staticmethod
-    def forward(ctx, w: torch.Tensor, bs: int):
+    def forward(ctx, w: torch.Tensor, bs: int, bits: int):
+        qmax = 2 ** (bits - 1) - 1
         out_f, in_f = w.shape[-2], w.shape[-1]
         pad = (-in_f) % bs
         if pad:
             w = torch.nn.functional.pad(w, (0, pad))
         wb = w.reshape(out_f, -1, bs)
-        scale = wb.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / 7.0
-        q = torch.clamp(torch.round(wb / scale), -8, 7)
+        scale = wb.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / qmax
+        q = torch.clamp(torch.round(wb / scale), -qmax - 1, qmax)
         deq = (q * scale).reshape(out_f, -1)
         return deq[:, :in_f] if pad else deq
 
     @staticmethod
     def backward(ctx, g):
-        return g, None
+        return g, None, None
 
 
-def fake_quant_weights_(model, block_size: int = 32) -> int:
-    """Wrap every Linear so its weight is int4-block fake-quantized in forward."""
-    n = 0
-    for mod in model.modules():
-        if isinstance(mod, torch.nn.Linear) and mod.weight.shape[-1] >= block_size:
-            if getattr(mod, "_qat_wrapped", False):
-                continue
-            mod._qat_wrapped = True
-            mod._qat_bs = block_size
-            orig = mod.forward
+# "mix" = mixed precision: the transformer body goes to the low bit-width, while the
+# output head stays higher. lm_head is the most quantization-sensitive matrix in a
+# small model (it maps to a 250k vocab); pushing it to 3 bits costs far more accuracy
+# per byte saved than any body layer.
+HIGH_PRECISION_PATTERNS = ("lm_head",)
+HIGH_PRECISION_BITS = 8
 
-            def fwd(self, x, _orig=orig):
-                wq = _FakeQuantInt4Block.apply(self.weight, self._qat_bs)
-                return torch.nn.functional.linear(x, wq, self.bias)
 
-            mod.forward = types.MethodType(fwd, mod)
-            n += 1
-    return n
+def fake_quant_weights_(model, block_size: int = 32, bits: int = 4) -> dict:
+    """Wrap every Linear so its weight is block-wise fake-quantized in forward."""
+    counts = {"low": 0, "high": 0, "bits": bits}
+    for name, mod in model.named_modules():
+        if not isinstance(mod, torch.nn.Linear) or mod.weight.shape[-1] < block_size:
+            continue
+        if getattr(mod, "_qat_wrapped", False):
+            continue
+        hi = any(p in name for p in HIGH_PRECISION_PATTERNS)
+        mod._qat_wrapped = True
+        mod._qat_bs = block_size
+        mod._qat_bits = HIGH_PRECISION_BITS if hi else bits
+        counts["high" if hi else "low"] += 1
+
+        def fwd(self, x):
+            wq = _FakeQuantBlock.apply(self.weight, self._qat_bs, self._qat_bits)
+            return torch.nn.functional.linear(x, wq, self.bias)
+
+        mod.forward = types.MethodType(fwd, mod)
+    return counts
 
 
 # -------------------------------------------------------------------- KV cache

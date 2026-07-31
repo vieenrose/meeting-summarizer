@@ -63,10 +63,12 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         cfg["model"], torch_dtype="bfloat16", attn_implementation=attn_impl,
     )
-    if cfg.get("qat_weight_bits") == 4:
+    if cfg.get("qat_weight_bits"):
         from train.qat import fake_quant_weights_
-        n = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32))
-        print(f"[qat] int4-block{cfg.get('qat_block_size', 32)} fake-quant on {n} Linears")
+        c = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32),
+                                bits=cfg["qat_weight_bits"])
+        print(f"[qat] int{c['bits']}-block{cfg.get('qat_block_size', 32)} on {c['low']} Linears"
+              f" (+{c['high']} kept int8: output head)")
     if cfg.get("qat_kv_bits"):
         from train.qat import install_kv_fake_quant
         how = install_kv_fake_quant(model, cfg["qat_kv_bits"])

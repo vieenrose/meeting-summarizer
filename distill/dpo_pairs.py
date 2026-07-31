@@ -34,6 +34,8 @@ STUDENT_URL = "http://127.0.0.1:8089/v1"
 JUDGE_URL = "http://127.0.0.1:8088/v1"
 student = AsyncOpenAI(base_url=STUDENT_URL, api_key="x", timeout=1800.0)
 judge_c = AsyncOpenAI(base_url=JUDGE_URL, api_key="x", timeout=1800.0)
+JUDGES = [judge_c]      # round-robin pool; judging is the throughput bottleneck
+_jrr = [0]
 tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 SEM = asyncio.Semaphore(8)
 
@@ -59,9 +61,11 @@ async def judge(transcript: str, output: str):
     if len(ids) > 24000:
         transcript = tok.decode(ids[:24000])
     p = JUDGE_PROMPT.format(transcript=transcript, output=output[:3000])
+    _jrr[0] = (_jrr[0] + 1) % len(JUDGES)
+    jc = JUDGES[_jrr[0]]
     async with SEM:
         try:
-            r = await judge_c.chat.completions.create(
+            r = await jc.chat.completions.create(
                 model="teacher", messages=[{"role": "user", "content": p}],
                 max_tokens=24, temperature=0.0,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}})
@@ -119,10 +123,25 @@ async def main():
     ap.add_argument("--parallel", type=int, default=6)
     ap.add_argument("--min-tokens", type=int, default=0,
                     help="only prompts whose transcript is at least this many tokens")
+    ap.add_argument("--judge-urls", nargs="*", default=None,
+                    help="one or more judge endpoints to round-robin across")
     args = ap.parse_args()
+    if args.judge_urls:
+        JUDGES.clear()
+        JUDGES.extend(AsyncOpenAI(base_url=u, api_key="x", timeout=1800.0)
+                      for u in args.judge_urls)
 
     rows = []
     seen = set()
+    outp0 = Path(args.out)
+    if outp0.exists():
+        for line in outp0.open():
+            try:
+                d = json.loads(line)
+                seen.add((d["meeting_id"], d["task"]))
+            except Exception:
+                pass
+        print(f"resume: {len(seen)} prompts already produced pairs", flush=True)
     for line in Path(args.src).open():
         d = json.loads(line)
         if d["split"] != "train" or d["phase"] not in ("single", "map"):

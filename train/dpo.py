@@ -53,10 +53,11 @@ def main() -> None:
         cfg["model"], torch_dtype="bfloat16",
         attn_implementation=cfg.get("attn", "kernels-community/flash-attn2"))
 
-    if cfg.get("qat_weight_bits") == 4:
+    if cfg.get("qat_weight_bits"):
         from train.qat import fake_quant_weights_
-        n = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32))
-        print(f"[qat] int4-block{cfg.get('qat_block_size', 32)} on {n} Linears")
+        c = fake_quant_weights_(model, block_size=cfg.get("qat_block_size", 32),
+                                bits=cfg["qat_weight_bits"])
+        print(f"[qat] int{c['bits']} on {c['low']} Linears (+{c['high']} int8 head)")
     if cfg.get("qat_kv_bits"):
         from train.qat import install_kv_fake_quant
         print(f"[qat] KV {cfg['qat_kv_bits']}b: {install_kv_fake_quant(model, cfg['qat_kv_bits'])}")
