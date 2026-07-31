@@ -94,7 +94,12 @@ async def main():
     ap.add_argument("--tasks", nargs="*", default=None,
                     help="only judge these tasks (default: all)")
     ap.add_argument("--limit", type=int, default=0, help="judge at most N records (0=all)")
+    ap.add_argument("--url", default=BASE_URL, help="judge endpoint")
+    ap.add_argument("--shard", type=int, default=0, help="this worker's index")
+    ap.add_argument("--of", type=int, default=1, help="total workers (disjoint shards)")
     args = ap.parse_args()
+    global client
+    client = AsyncOpenAI(base_url=args.url, api_key="x", timeout=1800.0)
 
     done = set()
     outp = Path(args.out)
@@ -115,6 +120,8 @@ async def main():
         if (d["meeting_id"], d["variant"], d["task"], d["phase"]) in done:
             continue
         rows.append(d)
+    if args.of > 1:   # disjoint shards so parallel workers never judge the same record
+        rows = [r for i, r in enumerate(rows) if i % args.of == args.shard]
     if args.limit:
         rows = rows[: args.limit]
     print(f"{len(rows)} records to judge", flush=True)

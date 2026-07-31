@@ -151,6 +151,14 @@ def main(*targets_paths: str) -> None:
             continue
         d["completion"] = normalize(d["completion"])
         stats["total"] += 1
+        # Register the identity BEFORE filtering: the judged file and the raw file hold
+        # the same records, so a target dropped for low faith would otherwise be let
+        # back in by its unjudged twin — silently nullifying the faithfulness gate.
+        key = hash((d["prompt"], d["completion"]))
+        if key in seen:
+            stats["dup"] += 1
+            continue
+        seen.add(key)
         if not keep(d):
             stats["filtered"] += 1
             j = d.get("judge") or {}
@@ -159,11 +167,6 @@ def main(*targets_paths: str) -> None:
             elif j.get("faith", 0) and j["faith"] < MIN_FAITH:
                 stats["dropped_lowfaith"] += 1
             continue
-        key = hash((d["prompt"], d["completion"]))
-        if key in seen:
-            stats["dup"] += 1
-            continue
-        seen.add(key)
         row = {
             "messages": [
                 {"role": "system", "content": SYSTEM},
