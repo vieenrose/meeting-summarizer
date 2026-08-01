@@ -85,8 +85,9 @@ supported — see the training repo.
 
 ## Known limitations — please surface these honestly in UI
 
-- **Faithfulness degrades past ~12k tokens.** Measured on the pre-RFT checkpoint:
-  faith 4.29 / 1% inversion at 2–6k tokens, versus 3.34 / 25% inversion at 12–20k.
+- **Faithfulness degrades past ~12k tokens.** Measured on the shipped checkpoint:
+  faith 4.05 / 1.8% inversion at 4–12k tokens, versus 3.36 / 15.3% inversion above 12k,
+  where 46% of outputs score faith≤2.
   Chunking at ~10–12k tokens with a hierarchical reduce keeps the model in its reliable
   regime; the map/reduce prompts are in the training mix for exactly this.
 - **Owner attribution can slip** on long transcripts (assigning an action to the wrong

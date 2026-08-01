@@ -65,11 +65,15 @@ no-speaker variant. All three speaker styles are in the training data.
 
 Faithfulness is **length-dependent**, measured:
 
-| transcript tokens | faith (1-5) | inversion rate |
-|---|---|---|
-| 2k–6k | 4.29 | **1%** |
-| 6k–12k | 4.04 | 4% |
-| **12k–20k** | **3.34** | **25%** |
+| transcript tokens | faith (1-5) | faith≤2 | inversion rate |
+|---|---|---|---|
+| <4k | 4.03 | 20% | 8.6% |
+| 4k–12k | 4.05 | 18% | **1.8%** |
+| **>12k** | **3.36** | **46%** | **15.3%** |
+
+(measured on the shipped checkpoint. The rejection-sampling pass cut inversions
+22.2%→15.3% on long documents and 3.6%→1.8% on medium; it did **not** move the
+broader faith≤2 tail, which remains the open weakness.)
 
 So: **chunk at ~10–12k tokens even though 32k fits.** A chunk that fits is not the same as
 a chunk the model summarizes faithfully. The map/reduce prompt templates remain in the
