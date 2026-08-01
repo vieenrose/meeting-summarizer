@@ -91,7 +91,71 @@ prefill is the binding cost, so an approach that re-reads everything twice must 
   (e.g. a budget agreed in chunk 2 and reversed in chunk 9) — the hardest case, and the
   one where inversion errors will show up.
 
-## 7. Immediate next step
+## 7. What the literature says (survey, Aug 2026)
+
+### The gap is real and the intersection is empty
+- **Trained memory/reading policy floor = 1.5B** (InfoMem, Qwen2.5-1.5B). **Trained memory
+  CRUD floor = 4B** (Mem-α, UMA, AgeMem). The single sub-4B attempt (Supersede, Qwen2.5-3B)
+  reaches 16.7%.
+- **MemFlow** ([2605.03312](https://arxiv.org/abs/2605.03312)) is the only published memory
+  framework with a **Qwen3-0.6B** number: 28.3 → **41.4** on LongMemEval — and it gets there
+  by being *training-free and deliberately non-agentic*, hard-coding deterministic routing
+  because *"sub-3B agents frequently produce hallucinated calls or broken reasoning traces."*
+  **This is our baseline to beat.**
+- Nobody has trained any model for agentic memory **on summarization**. Where it is measured,
+  MemAgent's RL memory training buys **+0.08 ROUGE on GovReport at 7B**.
+
+### Why our KEEP/AMEND probe failed — it is a documented failure mode
+"Anatomy of Agentic Memory" ([2602.19320](https://arxiv.org/abs/2602.19320)) measures
+**30.38% malformed memory writes at Qwen-2.5-3B** vs 17.91% at gpt-4o-mini, and names it
+**"Silent Failure": the agent converses fluently while its memory is silently corrupted.**
+Circuit analysis ([2605.03354](https://arxiv.org/abs/2605.03354)) localises it: *"routing
+circuitry is causally active at 0.6B, while content circuitry produces no detectable signal
+until 4B."* Small models can *route*; they cannot yet *write* memory correctly.
+
+BFCL V4 multi-turn scores confirm the floor: **Qwen3-0.6B 3.62%, Granite-4.0-350m 2.50%,
+Gemma-3-1b 0.00%**.
+
+### But the floor may be a *training* gap, not a capability limit
+- **Self-Notes** ([2305.00833](https://arxiv.org/abs/2305.00833)) learns inline note-writing at
+  **124M** (synthetic tasks).
+- **ARMT** ([2407.04841](https://arxiv.org/abs/2407.04841)) at **145M** scores 99.9% on
+  BABILong@128k where GPT-4+RAG gets 24%.
+- **Agent distillation** ([2505.17612](https://arxiv.org/abs/2505.17612), NeurIPS'25 Spotlight)
+  works at **0.5B**.
+That contrast — prompted sub-1B fails, trained ~100M succeeds on narrow ops — is the actual
+research question.
+
+### Design rules the evidence supports
+1. **Typed memory, not free text.** Free-text running summaries lose recall 70.0→45.2 (strong
+   model) and 66.9→**26.8** (weak model) over a session; JSON memory cuts that loss from
+   −24.8 to −4.9 points ([2407.15021](https://arxiv.org/abs/2407.15021)). **Drift is omission,
+   not corruption** — precision barely moves.
+2. **Keep verbatim text.** Storing raw chunks beats storing LLM-extracted artifacts by
+   **+15.9 / +22.0 points** ([2601.00821](https://arxiv.org/abs/2601.00821)). Structured notes
+   should *augment* verbatim anchors, not replace them.
+3. **One routing level.** *"A second, deeper routing level never helps and sometimes breaks
+   accuracy outright"* ([2607.17598](https://arxiv.org/abs/2607.17598)).
+4. **Minimise passes — on ARM, prefill is the cost.** MobileLLM-Pro measured on a Galaxy S25:
+   **8k prefill = 63.5 s on CPU** (9.8 s on NPU), and it is super-linear. Every agentic
+   re-read is a fresh prefill; MemReread's 3–4× latency is free on an H100 and fatal here.
+   Use PRISM's memory-before-chunk layout for **69% KV-cache reuse**
+   ([2412.18914](https://arxiv.org/abs/2412.18914)).
+5. **Near-greedy decoding.** τ≈0 *"essentially arrests factual drift after 2 iterations"*
+   while τ=1.0 diverges continuously ([2502.20258](https://arxiv.org/abs/2502.20258)).
+
+### Sobering counter-evidence to weigh
+- **Incremental summarization degrades inversely with model size**: BooookScore penalty −6.6
+  (GPT-4) → −17.0 (GPT-3.5) → **total failure at LLaMA-2-7B**, which "failed to follow the
+  compression instruction." The break point is the *update* step, exactly where we failed.
+- **Long-CoT training destroys small models**: 8k long-CoT examples cost **up to 75%** of
+  baseline; Gemma3-1B falls to ~25% ([2506.07712](https://arxiv.org/abs/2506.07712)).
+  Keep trajectories short.
+- **Sub-1B on-device reality**: SlimLM found that past ~1,000 input tokens *"smaller models
+  struggle to complete multiple experimental runs"*; its sweet spot is **800 tokens**.
+  HMT at 135M–350M gets QMSum 19.4–22.2 but GovReport ROUGE ~2.5× worse than a 6B baseline.
+
+## 8. Immediate next step
 
 Implement rungs 1 and 2 as a prototype harness against the *already-shipped*
 `voxsum-qwen35-0.8b` at 8k and 12k windows, and measure on the same 48 held-out meetings.
