@@ -1,0 +1,551 @@
+{
+ "agg": {
+  "single": {
+   "n": 8,
+   "faith": 4.0,
+   "faith_le2": 0.25,
+   "invert": 0.0,
+   "cover": 4.25,
+   "calls": 1.0,
+   "prompt_tokens": 14503
+  },
+  "map": {
+   "n": 16,
+   "faith": 4.75,
+   "faith_le2": 0.062,
+   "invert": 0.062,
+   "cover": 4.62,
+   "calls": 5.2,
+   "prompt_tokens": 19292
+  },
+  "reread": {
+   "n": 16,
+   "faith": 4.75,
+   "faith_le2": 0.062,
+   "invert": 0.062,
+   "cover": 4.62,
+   "calls": 5.4,
+   "prompt_tokens": 19567
+  }
+ },
+ "results": {
+  "single": [
+   {
+    "meeting": "qmsum-test-ES2004b",
+    "lang": "en",
+    "ntok": 13836,
+    "chunks": 1,
+    "faith": 3,
+    "cover": 4,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 14034,
+    "notes": "TITLE: Universal TV Remote Control Design\nSUMMARY:\n- Team decided on universal control for all ages and users.\n- Budget constrained to basic functions only.\n- Focus shifted to user-friendliness and simplicity.\n- Rechargeable design with docking station considered.\n- Corporate logo must be incorporated into the aesthetic.\nDECISIONS:\n- Product limited to TV/video programming only.\n- Design must reflect company fashion and image.\n- Control must be rechargeable with battery backup.\nACTIONS:\n- Marketing to research market preferences for new designs.\n- Engineering to finalize button layout and ergo"
+   },
+   {
+    "meeting": "qmsum-test-Bro027",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (30152 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_10202015_2015-2085",
+    "lang": "en",
+    "ntok": 14197,
+    "chunks": 1,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 14395,
+    "notes": "TITLE: Alameda Point Industrial Lease Amendment\nSUMMARY:\n- Council debates leasing a maritime facility with container storage.\n- Tenant concerns about visibility and truck traffic.\n- Council votes to limit containers to 36 and restrict logistics use.\n- Lease term extended to ten years for new tenant.\nDECISIONS:\n- Limit container storage to 36 units.\n- Prohibit stacking of cargo containers.\n- Restrict facility use to maritime/industrial only.\nACTIONS:\n- Tenant must store containers behind building and in fenced area.\n- Facility must not generate truck traffic or logistics operations.\nOPEN:\n- Ad"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_10152019_19-1048",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (16658 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "qmsum-test-covid_4",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (23849 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "qmsum-test-IS1003c",
+    "lang": "en",
+    "ntok": 12408,
+    "chunks": 1,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 12606,
+    "notes": "TITLE: Remote Control Concept Design Meeting\nSUMMARY:\n- Team discussed user interface concepts including Google and intelligent controllers.\n- Debated reliability of voice/gesture recognition versus simple button control.\n- Addressed fashion trends focusing on fruits, vegetables, and spongy textures.\n- Confirmed need for solar energy and low-level chips for cost-effectiveness.\n- Agreed to work on prototype with specific instructions from coaches.\nDECISIONS:\n- Proceed with Google controller plus fancy features and solar energy.\n- Use wooden material with spongy touch for buttons.\n- Include simp"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02212017_2017-3935",
+    "lang": "en",
+    "ntok": 15110,
+    "chunks": 1,
+    "faith": 2,
+    "cover": 4,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 15308,
+    "notes": "TITLE: Divest from Wells Fargo and Pipeline Funding\nSUMMARY:\n- Council passed referral to divest from Wells Fargo and exclude from RFP process.\n- Council directed staff to identify current Wells Fargo accounts and report back.\n- Council approved no new investments in Wells Fargo until further counsel direction.\n- Council emphasized social responsibility over profit for the Dakota Access pipeline.\nDECISIONS:\n- Referral passed to divest from Wells Fargo and exclude from banking services RFP.\n- No new investments permitted in Wells Fargo securities until further counsel direction.\nACTIONS:\n- Staf"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_12152014_14-0941",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (27186 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02182020_2020-7686",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (20783 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "meetingbank-test-SeattleCityCouncil_06152020_CB 119805",
+    "lang": "en",
+    "ntok": 14956,
+    "chunks": 1,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 15154,
+    "notes": "TITLE: Seattle Police Ban on Crowd Control Weapons\nSUMMARY:\n- Council passes bill banning police ownership and use of crowd control weapons.\n- Bill addresses public testimony of police violence and lack of accountability.\n- Council unanimously votes in favor of the amended legislation.\nDECISIONS:\n- Bill 119805 passed with unanimous vote.\n- Police banned from owning, purchasing, renting, storing, or using crowd control weapons.\nACTIONS:\n- Councilmember Salon: Sign and seal the bill.\n- Council: Address disposal of existing police inventory.\nOPEN:\n- Future steps for police accountability and budg"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_08212017_17-0750",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (29467 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_05232017_17-0401",
+    "lang": "en",
+    "ntok": 14510,
+    "chunks": 1,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 14708,
+    "notes": "TITLE: Long Beach Homelessness Crisis Update\nSUMMARY:\n- Councilwoman Price requests multi-departmental report on homelessness and quality of life.\n- Councilman Mongo argues study is limited to Long Beach and needs regional integration.\n- Public speaker claims current police response is ineffective and criminals are not treated.\n- Councilman Bond questions housing rules and safety net adequacy.\n- Councilwoman Price emphasizes need for compassionate, multi-departmental support.\nDECISIONS:\n- No formal decision made; item passed with no action taken.\nACTIONS:\n- City Manager to prepare report on ho"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02052019_19-0071",
+    "lang": "en",
+    "ntok": 15312,
+    "chunks": 1,
+    "faith": 2,
+    "cover": 2,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 15510,
+    "notes": "TITLE: Breakers Hotel Project Hearing and Appeal Denied\nSUMMARY:\n- Project approved for historic hotel restoration with new amenities.\n- Appeals denied due to environmental concerns and noise impacts.\n- Developer committed to local jobs and community engagement.\n- Council votes to deny appeals and approve project.\nDECISIONS:\n- Deny all appeals from the Planning Commission.\n- Approve site plan, use permit, and coastal development permit.\nACTIONS:\n- Continue monitoring noise levels during future events.\n- Ensure local job placement in hotel operations.\nOPEN:\n- Ongoing discussion on noise mitigat"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02072017_17-0049",
+    "lang": "en",
+    "ntok": 14112,
+    "chunks": 1,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 1,
+    "prompt_tokens": 14310,
+    "notes": "TITLE: Long Beach Bike Masterplan Update and Vote\nSUMMARY:\n- Council approves updated bicycle masterplan as technical appendix to Long Beach General Plan.\n- Staff reports progress on safety, equity, and network connectivity across the city.\n- Public comments highlight need for better education, funding transparency, and inclusion of Anaheim corridor.\n- Council votes to approve the plan with a 7-0 vote.\nDECISIONS:\n- Adopt updated bicycle masterplan as technical appendix to Long Beach General Plan.\n- Accept mitigated negative declaration number D04-16 citywide.\nACTIONS:\n- Continue funding for ex"
+   },
+   {
+    "meeting": "qmsum-test-Bed008",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (21952 tokens) exceeds the available context size (16384 t"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_04172018_18-0220",
+    "error": "Error code: 400 - {'error': {'code': 400, 'message': 'request (17927 tokens) exceeds the available context size (16384 t"
+   }
+  ],
+  "map": [
+   {
+    "meeting": "qmsum-test-ES2004b",
+    "lang": "en",
+    "ntok": 13836,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14397,
+    "notes": "SUMMARY:\n- Decided on a universal control design accessible to a wide age range with a fashion-inspired aesthetic. [c0]\n- Confirmed decision to use a flip-open design with top functions and middle features. [c0]\n- Addressed budget constraints and power consumption issues regarding battery size. [c0]\n- Reviewed market research findings, noting user dislike of current designs and high willingness to pay for aesthetics. [c0]\n- Identified need for simplified interaction and ergonomic considerations. [c0]\nDECISIONS:\n- Adopt a flip-open design layout with top functions and middle features. [c0]\n- Ta"
+   },
+   {
+    "meeting": "qmsum-test-Bro027",
+    "lang": "en",
+    "ntok": 29114,
+    "chunks": 8,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 8,
+    "prompt_tokens": 30235,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_10202015_2015-2085",
+    "lang": "en",
+    "ntok": 14197,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14758,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_10152019_19-1048",
+    "lang": "en",
+    "ntok": 16223,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 16924,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-covid_4",
+    "lang": "en",
+    "ntok": 23208,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 24049,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-IS1003c",
+    "lang": "en",
+    "ntok": 12408,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 12969,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02212017_2017-3935",
+    "lang": "en",
+    "ntok": 15110,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15671,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_12152014_14-0941",
+    "lang": "en",
+    "ntok": 26609,
+    "chunks": 7,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 7,
+    "prompt_tokens": 27590,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02182020_2020-7686",
+    "lang": "en",
+    "ntok": 20144,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 20985,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-SeattleCityCouncil_06152020_CB 119805",
+    "lang": "en",
+    "ntok": 14956,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15517,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_08212017_17-0750",
+    "lang": "en",
+    "ntok": 28810,
+    "chunks": 8,
+    "faith": 1,
+    "cover": 1,
+    "invert": true,
+    "calls": 8,
+    "prompt_tokens": 29931,
+    "notes": "SUMMARY:\n- Opponents of the proposed rezoning request from 1267 Equipment Street to GMU-3. [c1]\n- Concerns over impact on existing single-family homes, character preservation, and light rail station proximity. [c1]\n- Discussion of parking challenges and street usage in a cul-de-sac. [c1]\n- Debate on balancing density with neighborhood character and quality of life. [c1]\n- Mention of a protest petition and community advocacy group involvement. [c1]\nDECISIONS:\n- Council to oppose the rezoning request for 1267 Equipment Street. [c1]\n- Recommendation to recommend against the applicant's request. ["
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_05232017_17-0401",
+    "lang": "en",
+    "ntok": 14510,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15071,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02052019_19-0071",
+    "lang": "en",
+    "ntok": 15312,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15873,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02072017_17-0049",
+    "lang": "en",
+    "ntok": 14112,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14673,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-Bed008",
+    "lang": "en",
+    "ntok": 21108,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 21949,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_04172018_18-0220",
+    "lang": "en",
+    "ntok": 17380,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 18081,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   }
+  ],
+  "reread": [
+   {
+    "meeting": "qmsum-test-ES2004b",
+    "lang": "en",
+    "ntok": 13836,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 14545,
+    "notes": "SUMMARY:\n- Decided on a universal control design accessible to a wide age range with a fashion-inspired aesthetic. [c0]\n- Confirmed decision to use a flip-open design with top functions and middle features. [c0]\n- Addressed budget constraints and power consumption issues regarding battery size. [c0]\n- Reviewed market research findings, noting user dislike of current designs and high willingness to pay for aesthetics. [c0]\n- Identified need for simplified interaction and ergonomic considerations. [c0]\nDECISIONS:\n- Adopt a flip-open design layout with top functions and middle features. [c0]\n- Ta"
+   },
+   {
+    "meeting": "qmsum-test-Bro027",
+    "lang": "en",
+    "ntok": 29114,
+    "chunks": 8,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 8,
+    "prompt_tokens": 30235,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_10202015_2015-2085",
+    "lang": "en",
+    "ntok": 14197,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14758,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_10152019_19-1048",
+    "lang": "en",
+    "ntok": 16223,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 16924,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-covid_4",
+    "lang": "en",
+    "ntok": 23208,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 24049,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-IS1003c",
+    "lang": "en",
+    "ntok": 12408,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 12969,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02212017_2017-3935",
+    "lang": "en",
+    "ntok": 15110,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15671,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_12152014_14-0941",
+    "lang": "en",
+    "ntok": 26609,
+    "chunks": 7,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 7,
+    "prompt_tokens": 27590,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02182020_2020-7686",
+    "lang": "en",
+    "ntok": 20144,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 20985,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-SeattleCityCouncil_06152020_CB 119805",
+    "lang": "en",
+    "ntok": 14956,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15517,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_08212017_17-0750",
+    "lang": "en",
+    "ntok": 28810,
+    "chunks": 8,
+    "faith": 1,
+    "cover": 1,
+    "invert": true,
+    "calls": 10,
+    "prompt_tokens": 34186,
+    "notes": "SUMMARY:\n- Opponents of the proposed rezoning request from 1267 Equipment Street to GMU-3. [c1]\n- Concerns over impact on existing single-family homes, character preservation, and light rail station proximity. [c1]\n- Discussion of parking challenges and street usage in a cul-de-sac. [c1]\n- Debate on balancing density with neighborhood character and quality of life. [c1]\n- Mention of a protest petition and community advocacy group involvement. [c1]\nDECISIONS:\n- Council to oppose the rezoning request for 1267 Equipment Street. [c1]\n- Recommendation to recommend against the applicant's request. ["
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_05232017_17-0401",
+    "lang": "en",
+    "ntok": 14510,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15071,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02052019_19-0071",
+    "lang": "en",
+    "ntok": 15312,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15873,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02072017_17-0049",
+    "lang": "en",
+    "ntok": 14112,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14673,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-Bed008",
+    "lang": "en",
+    "ntok": 21108,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 21949,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_04172018_18-0220",
+    "lang": "en",
+    "ntok": 17380,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 18081,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   }
+  ]
+ }
+}
