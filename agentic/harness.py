@@ -36,6 +36,10 @@ from transformers import AutoTokenizer
 
 SECTIONS = ["SUMMARY", "DECISIONS", "ACTIONS", "OPEN", "TOPICS"]
 
+# NOTE: these bespoke prompts are kept only for ablation. Production uses the trained
+# NOTES_TEMPLATE from distill/tasks.py — see trained_chunk_prompt() below. Asking a
+# heavily fine-tuned model for a *near-miss* of its trained format is worse than asking
+# for the format itself and discarding the parts you don't need.
 CHUNK_PROMPT_EN = """Read this section of a meeting transcript and write notes about it.
 
 Use EXACTLY this format, and put the timestamp of the supporting line in square brackets
@@ -85,13 +89,19 @@ Rules: keep the [timestamp] anchors. If two bullets disagree, keep the LATER tim
 drop the earlier one — a later statement supersedes an earlier one. Do not invent anything.
 Output only the bullets.
 
-{items}"""
+{items}
+
+Supporting transcript lines (use these to check any bullet you are unsure about):
+{evidence}"""
 
 COMPRESS_ZH = """以下是同一場會議「{section}」區段的筆記，來自逐字稿的不同部分。請合併成最多 {n} 點。
 
 規則：保留 [時間戳記]。若兩點互相矛盾，保留「時間較晚」的那一點並刪去較早的——後面的說法會取代前面的。不要杜撰。只輸出條列。
 
-{items}"""
+{items}
+
+原始逐字稿依據（若對某一點沒把握，請以此為準）：
+{evidence}"""
 
 CONTESTED_EN = """Below are notes from one meeting. Some may contradict each other
 (e.g. something approved and later rejected).
@@ -103,28 +113,60 @@ If nothing is contradictory, output exactly: none
 {items}"""
 
 
+def trained_chunk_prompt(lang: str, chunk: str) -> str:
+    """The app's own NOTES prompt, verbatim — what the model was fine-tuned to answer.
+
+    It yields TITLE + six sections; the harness keeps the five it accumulates and drops
+    per-chunk TITLEs (a title per chunk is meaningless; the real one is derived at the end).
+    """
+    import tasks as T
+    return (T.NOTES_TEMPLATE_ZH % chunk) if lang == "zh-TW" else (T.NOTES_TEMPLATE % ("", chunk))
+
+
 def clock_to_sec(ts: str) -> int:
     p = [int(x) for x in ts.split(":")]
     return p[0] * 3600 + p[1] * 60 + p[2] if len(p) == 3 else p[0] * 60 + p[1]
 
 
+THINK = re.compile(r"(?s)<think>.*?</think>")
+
+
 def parse_notes(text: str) -> dict:
-    """Split model output into typed sections. Malformed input degrades to empty, never
-    to a crash — the harness must survive a bad generation."""
+    """Split model output into typed sections.
+
+    Two real failure modes seen on-device, both of which used to silently yield NOTHING:
+      1. the model wraps its answer in <think></think> (llama.cpp --jinja may or may not
+         strip it depending on --reasoning-format);
+      2. it emits correct bullets but omits the section headers entirely.
+    Header-less bullets are kept as SUMMARY rather than discarded — losing a whole chunk's
+    content to a formatting slip is far worse than filing it under a weaker heading.
+    """
+    text = THINK.sub("", text or "").strip()
     out = {s: [] for s in SECTIONS}
     cur = None
-    for line in (text or "").split("\n"):
+    saw_header = False
+    for line in text.split("\n"):
         line = line.strip()
-        m = re.match(r"^([A-Z]+):\s*$", line)
+        m = re.match(r"^([A-Z]+)\s*[:：]\s*$", line)
         if m and m.group(1) in out:
-            cur = m.group(1)
+            cur = m.group(1); saw_header = True
             continue
-        if cur and line.startswith("- ") and line[2:].strip() not in ("", "-"):
-            out[cur].append(line[2:].strip())
+        if line.startswith("- ") and line[2:].strip() not in ("", "-"):
+            out[cur or "SUMMARY"].append(line[2:].strip())
+    if not saw_header and not any(out[s] for s in SECTIONS):
+        # last resort: prose with no bullets at all
+        body = [l.strip() for l in text.split("\n") if len(l.strip()) > 20][:5]
+        out["SUMMARY"].extend(body)
     return out
 
 
 ANCHOR = re.compile(r"\[(\d+:\d{2}(?::\d{2})?)\]\s*$")
+LINE_TS = re.compile(r"^\[(\d+:\d{2}(?::\d{2})?)\]")
+
+
+def anchor_line_sec(line: str) -> int:
+    m = LINE_TS.match(line.strip())
+    return clock_to_sec(m.group(1)) if m else -1
 
 
 def anchor_sec(item: str) -> int:
@@ -159,7 +201,17 @@ class Runner:
             max_tokens=max_tokens, temperature=self.temp,
             extra_body={"chat_template_kwargs": {"enable_thinking": False},
                         "top_k": 1, "presence_penalty": 1.0})
-        return (r.choices[0].message.content or "").strip()
+        m = r.choices[0].message
+        out = (m.content or "").strip()
+        if not out:
+            # llama.cpp --jinja routes a <think> block into reasoning_content and leaves
+            # content EMPTY. Qwen3.5 still emits one occasionally even with
+            # enable_thinking=false, and a 420-token budget can be spent entirely inside
+            # it — which silently produced empty notes for a whole 64k transcript before
+            # this fallback existed. Serve with `--reasoning-format none` to avoid the
+            # split; salvage it here either way.
+            out = (getattr(m, "reasoning_content", None) or "").strip()
+        return out
 
 
 def chunk_lines(transcript: str, tok, budget: int) -> list:
@@ -173,6 +225,32 @@ def chunk_lines(transcript: str, tok, budget: int) -> list:
     if cur:
         chunks.append("\n".join(cur))
     return chunks
+
+
+def evidence_for(items, transcript_lines, line_times, window=2, max_lines=40):
+    """Pull the transcript lines each bullet's anchor points at.
+
+    This turns the compress step from a judgement ("which of these two contradictory
+    bullets is right?") into a lookup ("here is what was actually said at 9:10"). The
+    residual inversions after deterministic merging all live in this step, because it is
+    the only place the model combines claims whose evidence it cannot see.
+    """
+    want = set()
+    for it in items:
+        sec = anchor_sec(it)
+        if sec < 0:
+            continue
+        # nearest line at or before the anchor, plus a small window after it
+        lo = 0
+        for i, t0 in enumerate(line_times):
+            if t0 <= sec:
+                lo = i
+            else:
+                break
+        for j in range(lo, min(lo + window + 1, len(transcript_lines))):
+            want.add(j)
+    picked = sorted(want)[:max_lines]
+    return "\n".join(transcript_lines[i] for i in picked)
 
 
 def merge_deterministic(per_chunk: list) -> dict:
@@ -191,16 +269,19 @@ def merge_deterministic(per_chunk: list) -> dict:
 
 
 async def summarize(runner, transcript, lang, mode="reread", chunk_budget=4000,
-                    max_bullets=(5, 5, 6, 4, 6), max_reread=2):
+                    max_bullets=(5, 5, 6, 4, 6), max_reread=2, grounded=True):
     tok = runner.tok
+    tlines = [l for l in transcript.split("\n") if l.strip()]
+    ltimes = [anchor_line_sec(l) for l in tlines]
     chunks = chunk_lines(transcript, tok, chunk_budget)
     zh = lang == "zh-TW"
+    use_trained = mode != "bespoke"
     cp = CHUNK_PROMPT_ZH if zh else CHUNK_PROMPT_EN
 
     per_chunk = []
     running = {s: [] for s in SECTIONS}
     for i, ch in enumerate(chunks):
-        prompt = cp.format(cid=f"c{i}", chunk=ch)
+        prompt = trained_chunk_prompt(lang, ch) if use_trained else cp.format(cid=f"c{i}", chunk=ch)
         if mode == "running" and any(running[s] for s in SECTIONS):
             carry = render(running)
             prompt = (("目前的筆記：\n" if zh else "Notes so far:\n") + carry +
@@ -221,7 +302,9 @@ async def summarize(runner, transcript, lang, mode="reread", chunk_budget=4000,
             ids = [c for c in re.findall(r"c(\d+)", ans) if int(c) < len(chunks)][:max_reread]
             for cid in ids:
                 i = int(cid)
-                notes = parse_notes(await runner.gen(cp.format(cid=f"c{i}", chunk=chunks[i]), 420))
+                notes = parse_notes(await runner.gen(
+                    trained_chunk_prompt(lang, chunks[i]) if use_trained
+                    else cp.format(cid=f"c{i}", chunk=chunks[i]), 420))
                 for s in SECTIONS:
                     notes[s] = [f"{x} [c{i}]" if f"[c{i}]" not in x else x for x in notes[s]]
                 per_chunk.append(notes)
@@ -238,7 +321,8 @@ async def summarize(runner, transcript, lang, mode="reread", chunk_budget=4000,
             final[s] = items
         else:
             body = "\n".join(f"- {i}" for i in items)
-            out = await runner.gen(comp.format(section=s, n=n, items=body), 420)
+            ev = evidence_for(items, tlines, ltimes) if grounded else "(none)"
+            out = await runner.gen(comp.format(section=s, n=n, items=body, evidence=ev), 420)
             got = [l.strip()[2:].strip() for l in out.split("\n") if l.strip().startswith("- ")]
             final[s] = got[:n] or items[:n]
     return final, len(chunks)

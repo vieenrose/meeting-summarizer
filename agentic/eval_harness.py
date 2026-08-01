@@ -20,6 +20,7 @@ from openai import AsyncOpenAI
 
 import tasks as T
 from agentic.harness import Runner, SECTIONS, render, summarize
+from agentic.preprocess import compact
 from configs.transcript_format import SpeakerStyle, render_transcript
 
 JUDGE = """You are grading meeting notes against the transcript they came from.
@@ -60,6 +61,10 @@ async def main():
     ap.add_argument("--student-url", default="http://127.0.0.1:8089/v1")
     ap.add_argument("--judge-url", default="http://127.0.0.1:8088/v1")
     ap.add_argument("--modes", nargs="+", default=["single", "map", "reread"])
+    ap.add_argument("--compact", action="store_true",
+                    help="deterministically strip fillers/backchannels first (-17.7% tokens)")
+    ap.add_argument("--grounded", action="store_true",
+                    help="give the compress step the transcript lines its anchors point at")
     ap.add_argument("--min-tokens", type=int, default=12000)
     ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--chunk", type=int, default=4000)
@@ -98,8 +103,10 @@ async def main():
                     notes = await runner.gen(prompt, T.NOTES_MAX_TOKENS)
                     nch = 1
                 else:
-                    state, nch = await summarize(runner, tr, lang, mode=mode,
-                                                 chunk_budget=args.chunk)
+                    src = compact(tr, zh=(lang == "zh-TW")) if args.compact else tr
+                    state, nch = await summarize(runner, src, lang, mode=mode,
+                                                 chunk_budget=args.chunk,
+                                                 grounded=args.grounded)
                     notes = render(state)
                 fa, co, inv = await judge(jc, "teacher", tr, notes, tok)
                 results[mode].append({

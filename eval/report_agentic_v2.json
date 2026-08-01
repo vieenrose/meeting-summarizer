@@ -1,0 +1,209 @@
+{
+ "agg": {
+  "map": {
+   "n": 16,
+   "faith": 5.0,
+   "faith_le2": 0.0,
+   "invert": 0.0,
+   "cover": 4.81,
+   "calls": 4.8,
+   "prompt_tokens": 18093
+  }
+ },
+ "results": {
+  "map": [
+   {
+    "meeting": "qmsum-test-ES2004b",
+    "lang": "en",
+    "ntok": 13836,
+    "chunks": 3,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 3,
+    "prompt_tokens": 11515,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-Bro027",
+    "lang": "en",
+    "ntok": 29114,
+    "chunks": 7,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 7,
+    "prompt_tokens": 25035,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_10202015_2015-2085",
+    "lang": "en",
+    "ntok": 14197,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14250,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_10152019_19-1048",
+    "lang": "en",
+    "ntok": 16223,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 16525,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-covid_4",
+    "lang": "en",
+    "ntok": 23208,
+    "chunks": 6,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 6,
+    "prompt_tokens": 24006,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-IS1003c",
+    "lang": "en",
+    "ntok": 12408,
+    "chunks": 3,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 3,
+    "prompt_tokens": 10410,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02212017_2017-3935",
+    "lang": "en",
+    "ntok": 15110,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15314,
+    "notes": "SUMMARY:\n- Council member advocates for divesting from Wells Fargo due to ethical concerns and past criminal behavior. [c0]\n- Council member cites social responsibility, climate impact, and comparison to other institutions. [c0]\n- Council member references recent criminal activity and financial instability. [c0]\n- Council member questions the feasibility of new investments and the timeline for decision-making. [c0]\n- Council member emphasizes the need for moral leadership over short-term profit. [c0]\nDECISIONS:\n- No specific decision made in this section. [c0]\nACTIONS:\n- No actions taken. [c0]"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_12152014_14-0941",
+    "lang": "en",
+    "ntok": 26609,
+    "chunks": 7,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 7,
+    "prompt_tokens": 26848,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-AlamedaCC_02182020_2020-7686",
+    "lang": "en",
+    "ntok": 20144,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 19771,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-SeattleCityCouncil_06152020_CB 119805",
+    "lang": "en",
+    "ntok": 14956,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 15785,
+    "notes": "SUMMARY:\n- Council passes Amendment 1 to remove new subsection D from the bill and restore old Section D language.\n- Council votes 9-0 to pass the amended bill.\n- Council President clarifies the bill addresses domestic use of weapons of war without mandating disposal of existing inventory.\n- Councilmember Salant reaffirms support for the bill and the model while ensuring accountability remains a priority.\n- Councilmember Strauss emphasizes the urgent need to protect residents from police violence and the use of weapons against them.\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-DenverCityCouncil_08212017_17-0750",
+    "lang": "en",
+    "ntok": 28810,
+    "chunks": 7,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 7,
+    "prompt_tokens": 28611,
+    "notes": "SUMMARY:\n- Opponents of the proposed rezoning for property at 1267 Equipment Street cite character preservation, light/sun access, and parking challenges. [c1]\n- Council members debate balancing density with neighborhood character and transit needs. [c1]\n- A councilman from a advocacy group is called to address procedural issues regarding protest signatures. [c1]\n- Councilman mentions a 160 rule affecting his ability to speak effectively. [c1]\nDECISIONS:\n- No specific rezoning decision was made during this transcript segment. [c1]\nACTIONS:\n- No actions were assigned to owners or council member"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_05232017_17-0401",
+    "lang": "en",
+    "ntok": 14510,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14795,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02052019_19-0071",
+    "lang": "en",
+    "ntok": 15312,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 15695,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_02072017_17-0049",
+    "lang": "en",
+    "ntok": 14112,
+    "chunks": 4,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 4,
+    "prompt_tokens": 14456,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "qmsum-test-Bed008",
+    "lang": "en",
+    "ntok": 21108,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 4,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 18870,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   },
+   {
+    "meeting": "meetingbank-test-LongBeachCC_04172018_18-0220",
+    "lang": "en",
+    "ntok": 17380,
+    "chunks": 5,
+    "faith": 5,
+    "cover": 5,
+    "invert": false,
+    "calls": 5,
+    "prompt_tokens": 17613,
+    "notes": "SUMMARY:\n-\nDECISIONS:\n-\nACTIONS:\n-\nOPEN:\n-\nTOPICS:\n-"
+   }
+  ]
+ }
+}
