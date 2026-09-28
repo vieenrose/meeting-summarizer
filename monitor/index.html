@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Training Monitor</title>
+<style>
+:root{
+  --bg:#f6f5f2; --panel:#ffffff; --ink:#1c1b19; --muted:#6d6a64; --line:#e3e0da; --grid:#eeebe5;
+  --accent:#2f6f5e; --accent-soft:#2f6f5e22; --warn:#b3261e; --warn-soft:#b3261e1a; --gold:#a36a00;
+  --run:#2f6f5e; --done:#6d6a64; --fail:#b3261e;
+  --s1:#2f6f5e; --s2:#8a5cf6; --s3:#c2410c;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#141412; --panel:#1d1c1a; --ink:#ecebe8; --muted:#9a968e; --line:#2e2c29; --grid:#262422;
+  --accent:#5fbfa3; --accent-soft:#5fbfa326; --warn:#f2877e; --warn-soft:#f2877e22; --gold:#e3b04b;
+  --run:#5fbfa3; --done:#9a968e; --fail:#f2877e; --s1:#5fbfa3; --s2:#b49cff; --s3:#f59e5b; color-scheme: dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#141412; --panel:#1d1c1a; --ink:#ecebe8; --muted:#9a968e; --line:#2e2c29; --grid:#262422;
+  --accent:#5fbfa3; --accent-soft:#5fbfa326; --warn:#f2877e; --warn-soft:#f2877e22; --gold:#e3b04b;
+  --run:#5fbfa3; --done:#9a968e; --fail:#f2877e; --s1:#5fbfa3; --s2:#b49cff; --s3:#f59e5b; color-scheme: dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;padding:0 16px 40px}
+.wrap{max-width:1180px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px;padding:22px 0 14px;border-bottom:1px solid var(--line);margin-bottom:18px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:5}
+h1{font-size:19px;margin:0;font-weight:650;letter-spacing:-.01em}
+.live{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--run);box-shadow:0 0 0 0 var(--accent-soft);animation:pulse 2s infinite}
+.dot.stale{background:var(--warn);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 var(--accent-soft)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.job{margin-left:auto;font-size:13px;color:var(--muted)} .job b{color:var(--ink);font-weight:600}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.run{cursor:pointer;transition:border-color .15s}
+.run.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.run h3{margin:0 0 8px;font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.pill{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid currentColor;font-weight:600;letter-spacing:.02em}
+.pill.running{color:var(--run)} .pill.finished{color:var(--done)} .pill.failed{color:var(--fail)}
+.bar{height:6px;background:var(--grid);border-radius:99px;overflow:hidden;margin:6px 0 8px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .6s}
+.kv{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;color:var(--muted)} .kv b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+h2{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:26px 0 10px}
+.charts{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.chart h4{margin:0 0 2px;font-size:13.5px;font-weight:600}
+.chart p{margin:0 0 6px;font-size:12px;color:var(--muted)}
+svg{width:100%;height:auto;display:block;overflow:visible}
+.axis text{fill:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+.axis line{stroke:var(--grid)}
+.legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin-top:4px;flex-wrap:wrap}
+.legend span::before{content:"";display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle;background:var(--c)}
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:12px}
+tr.best td{background:var(--accent-soft);font-weight:600}
+tr.start td{color:var(--muted);font-style:italic}
+td.bad{color:var(--warn)}
+.gpus{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.gpu .meter{height:8px;background:var(--grid);border-radius:99px;overflow:hidden;margin:6px 0 4px}
+.gpu .meter i{display:block;height:100%;background:var(--s2)}
+.gpu .meter.u i{background:var(--accent)}
+.events{font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.muted{color:var(--muted)} .err{color:var(--warn)}
+@media (max-width:520px){ .job{margin-left:0;width:100%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Gemma-4-E2B · Training Monitor</h1>
+  <a id="corpus-link" href="#" style="font-size:13px;color:var(--accent)">corpus ↗</a>
+  <script>document.getElementById("corpus-link").href=location.protocol+"//"+location.hostname+":8321/";</script>
+  <span class="live"><span class="dot" id="dot"></span><span id="updated">connecting…</span></span>
+  <span class="job" id="job"></span>
+</header>
+
+<div class="grid cards" id="runs"></div>
+
+<h2 id="sel-title">Run</h2>
+<div class="grid charts">
+  <div class="panel chart"><h4>Training reward</h4><p>Mean reward of each step's sampled group, with a 10-step moving average. On training prompts.</p><div id="c-reward"></div>
+    <div class="legend"><span style="--c:var(--s1)">moving avg</span><span style="--c:var(--grid)">per step</span></div></div>
+  <div class="panel chart"><h4>Held-out checkpoints</h4><p>Full pipeline on 7 unseen meetings. Dashed line: the run's starting checkpoint.</p><div id="c-heldout"></div>
+    <div class="legend"><span style="--c:var(--s1)">summary reward</span><span style="--c:var(--s2)">notes recall</span><span style="--c:var(--s3)">sessions passing ÷ 7</span></div></div>
+  <div class="panel chart"><h4>Completion length</h4><p>Mean tokens per sampled completion. A steady climb can mean the reward is being gamed.</p><div id="c-length"></div></div>
+  <div class="panel chart"><h4>Signal</h4><p>Reward spread within a group. GRPO learns nothing from groups that all score the same.</p><div id="c-std"></div></div>
+</div>
+
+<h2>Held-out checkpoint table</h2>
+<div class="panel table-wrap"><table id="table"></table><p class="muted" id="picked" style="margin:10px 0 0;font-size:12.5px"></p></div>
+
+<h2>GPUs</h2>
+<div class="grid gpus" id="gpus"></div>
+
+<h2>Recent events</h2>
+<div class="panel events" id="events"></div>
+</div>
+
+<script>
+let DATA=null, selected=null;
+const $=id=>document.getElementById(id);
+const fmtDur=s=>{if(s==null)return"–";s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}h ${m}m`:`${m}m`};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function state(r){return r.failed&&!r.finished?"failed":r.finished?"finished":(DATA.now-r.updated<600?"running":"stale")}
+
+function lineChart(el,series,{yMin,yMax,xLabel="step",height=190,refY=null,pct=false}={}){
+  const W=560,H=height,L=38,R=10,T=8,B=24;
+  const all=series.flatMap(s=>s.points);
+  if(!all.length){el.innerHTML='<p class="muted">No data yet.</p>';return}
+  const xs=all.map(p=>p[0]), ys=all.map(p=>p[1]).concat(refY!=null?[refY]:[]);
+  const x0=Math.min(...xs), x1=Math.max(...xs)||1;
+  let y0=yMin??Math.min(...ys), y1=yMax??Math.max(...ys); if(y1-y0<1e-9){y1+=1;y0-=1}
+  const sx=x=>L+(x-x0)/(x1-x0||1)*(W-L-R), sy=y=>T+(1-(y-y0)/(y1-y0))*(H-T-B);
+  let g='<g class="axis">';
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4, y=sy(v); g+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}"/><text x="${L-6}" y="${y+3}" text-anchor="end">${pct?Math.round(v*100)+"%":(Math.abs(v)>=100?Math.round(v):v.toFixed(2))}</text>`}
+  const ticks=5; for(let i=0;i<=ticks;i++){const v=x0+(x1-x0)*i/ticks; g+=`<text x="${sx(v)}" y="${H-6}" text-anchor="middle">${Math.round(v)}</text>`}
+  g+='</g>';
+  if(refY!=null) g+=`<line x1="${L}" x2="${W-R}" y1="${sy(refY)}" y2="${sy(refY)}" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1"/>`;
+  for(const s of series){
+    if(!s.points.length)continue;
+    const d=s.points.map((p,i)=>`${i?"L":"M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
+    g+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width||1.8}" stroke-linejoin="round" stroke-linecap="round" opacity="${s.opacity??1}"/>`;
+    if(s.dots) for(const p of s.points) g+=`<circle cx="${sx(p[0])}" cy="${sy(p[1])}" r="${s.r||2.6}" fill="${s.color}"${p[2]?` stroke="var(--panel)" stroke-width="1.5"`:""}><title>${esc(p[3]||"")}</title></circle>`;
+  }
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+
+const movAvg=(arr,k)=>arr.map((_,i)=>{const s=arr.slice(Math.max(0,i-k+1),i+1);return s.reduce((a,b)=>a+b,0)/s.length});
+
+function renderRuns(){
+  $("runs").innerHTML=DATA.runs.map(r=>{
+    const st=state(r), p=r.progress, total=p?p.total:r.steps.length, step=p?p.step:r.steps.length;
+    const pct=total?Math.min(100,step/total*100):0;
+    const best=bestRow(r);
+    return `<div class="panel run${r.id===selected?" sel":""}" data-id="${r.id}">
+      <h3>${esc(r.title)} <span class="pill ${st==="stale"?"failed":st}">${st}</span></h3>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="kv"><span>step <b>${step}/${total}</b></span>
+        ${st==="running"&&p?`<span>left <b>${fmtDur(p.remaining_s)}</b></span><span><b>${p.s_per_it.toFixed(1)}</b> s/step</span>`:""}
+        <span>held-out ckpts <b>${r.checkpoints.length}</b></span>
+        ${best?`<span>best <b>${esc(best.label)}</b> · pass <b>${best.pass}/${best.n}</b> · reward <b>${best.reward.toFixed(3)}</b></span>`:""}</div></div>`}).join("");
+  document.querySelectorAll(".run").forEach(el=>el.onclick=()=>{selected=el.dataset.id;renderAll()});
+}
+
+function bestRow(r){ if(!r.checkpoints.length)return null; return [...r.checkpoints].sort((a,b)=>b.reward-a.reward||b.pass-a.pass)[0]; }
+
+function renderSelected(){
+  const r=DATA.runs.find(x=>x.id===selected); if(!r)return;
+  $("sel-title").textContent=r.title;
+  const rew=r.steps.map(s=>s.reward??null).filter(v=>v!=null);
+  const idx=rew.map((_,i)=>i+1);
+  lineChart($("c-reward"),[
+    {points:rew.map((v,i)=>[idx[i],v]),color:"var(--muted)",width:1,opacity:.35},
+    {points:movAvg(rew,10).map((v,i)=>[idx[i],v]),color:"var(--s1)",width:2.2},
+  ],{yMin:0,yMax:1});
+  const len=r.steps.map((s,i)=>[i+1,s["completions/mean_length"]]).filter(p=>p[1]!=null);
+  lineChart($("c-length"),[{points:len,color:"var(--s3)",width:1.6}]);
+  const sd=r.steps.map((s,i)=>[i+1,s.reward_std]).filter(p=>p[1]!=null);
+  lineChart($("c-std"),[{points:sd.map((p,i)=>[p[0],movAvg(sd.map(q=>q[1]),10)[i]]),color:"var(--s2)",width:2}],{yMin:0});
+  const stepOf=l=>{const m=l.match(/(\d+)$/);return m?+m[1]:(r.steps.length||0)};
+  const cp=r.checkpoints.map(c=>({...c,x:stepOf(c.label)})).sort((a,b)=>a.x-b.x);
+  const best=bestRow(r);
+  lineChart($("c-heldout"),[
+    {points:cp.map(c=>[c.x,c.reward,c===best,`${c.label}: reward ${c.reward}`]),color:"var(--s1)",dots:true,width:2},
+    {points:cp.map(c=>[c.x,c.recall/100,false,`${c.label}: recall ${c.recall}%`]),color:"var(--s2)",dots:true,width:1.4,r:2},
+    {points:cp.map(c=>[c.x,c.pass/c.n,false,`${c.label}: pass ${c.pass}/${c.n}`]),color:"var(--s3)",dots:true,width:1.4,r:2},
+  ],{yMin:0,yMax:1,refY:r.start?r.start.reward:null});
+  const rows=[...(r.start?[{...r.start,_start:true}]:[]),...cp];
+  $("table").innerHTML=`<tr><th>checkpoint</th><th>time</th><th>pass</th><th>reward</th><th>Δ vs start</th><th>broken</th><th>notes recall</th><th>empty windows</th></tr>`+
+    rows.map(c=>{const d=r.start&&!c._start?c.reward-r.start.reward:null;
+      return `<tr class="${c._start?"start":c===best?"best":""}"><td>${esc(c.label)}</td><td>${c.time||""}</td><td>${c.pass}/${c.n}</td><td>${c.reward.toFixed(3)}</td>
+      <td class="${d!=null&&d<0?"bad":""}">${d==null?"":(d>=0?"+":"")+d.toFixed(3)}</td><td class="${c.zeros?"bad":""}">${c.zeros}</td><td>${c.recall}%</td><td class="${c.empty?"bad":""}">${c.empty}</td></tr>`}).join("");
+  $("picked").textContent=r.picked?("Picked for the next stage: "+r.picked):"";
+}
+
+function renderGpus(){
+  $("gpus").innerHTML=DATA.gpus.map(g=>`<div class="panel gpu"><div class="kv" style="justify-content:space-between"><b>GPU ${g.index}</b><span>${esc(g.name)}</span></div>
+    <div class="kv" style="margin-top:6px"><span>util <b>${g.util}%</b></span><span>temp <b>${g.temp}°C</b></span>${g.power!=null?`<span>power <b>${Math.round(g.power)} W</b></span>`:""}</div>
+    <div class="meter u"><i style="width:${g.util}%"></i></div>
+    <div class="kv"><span>memory <b>${(g.mem_used/1024).toFixed(1)} / ${(g.mem_total/1024).toFixed(0)} GB</b></span></div>
+    <div class="meter"><i style="width:${g.mem_used/g.mem_total*100}%"></i></div></div>`).join("")||'<p class="muted">nvidia-smi unavailable</p>';
+  const j=DATA.jobs; $("job").innerHTML=j.length?j.map(x=>`<b>${esc(x.kind)}${x.task?" · "+esc(x.task):""}</b>${x.adapter?` from ${esc(x.adapter.split("/").slice(-2).join("/"))}`:""}`).join(" · "):'<span class="err">no training or eval process running</span>';
+  $("events").textContent=DATA.events.join("\n")||"—";
+}
+
+function renderAll(){ renderRuns(); renderSelected(); renderGpus(); }
+
+async function tick(){
+  try{
+    const res=await fetch("/api/status",{cache:"no-store"}); DATA=await res.json();
+    if(!selected||!DATA.runs.some(r=>r.id===selected)){
+      const running=DATA.runs.find(r=>state(r)==="running"); selected=(running||DATA.runs[0]||{}).id;
+    }
+    renderAll();
+    $("dot").classList.remove("stale"); $("updated").textContent="updated "+new Date().toLocaleTimeString();
+  }catch(e){ $("dot").classList.add("stale"); $("updated").textContent="connection lost — retrying"; }
+}
+tick(); setInterval(tick,15000);
+</script>
+</body>
+</html>
