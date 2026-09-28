@@ -1,116 +1,115 @@
 # meeting-summarizer
 
-This project summarises long meetings on a phone. The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR (VibeVoice). The output is minutes whose every item cites the transcript line it rests on (`[M:SS]`).
+Reliable minutes for long meetings, produced **on the phone**.
 
-Target device budget: **peak RSS ≤ 6 GB**, and every model turn fits a context of **≤ 32k tokens**.
+The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR. The output is structured minutes in which every item cites the transcript line it rests on.
 
-## Status (2026-09-29)
+**Device budget:** peak RSS ≤ 6 GB, and every model call fits a context of ≤ 32k tokens.
 
-| | |
-|---|---|
-| Current direction | Reading agent with an external journal, driven by **Bonsai 2 27B ternary (PTQ1_0, 5.95 GB)**. No fine-tuning. Every turn is ≤ 32k tokens and thinking is budgeted. |
-| Dropped | Sub-27B students (MiniCPM5-2B, Gemma-4-E2B/E4B, Qwen3.5-4B). On contradictions, SFT, DPO, RFT and GRPO all plateau at about 2–3× the teacher's error rate (see [Findings](#findings)). Bonsai gen 1 was dropped for weak agency. |
-| Not production-ready | No human evaluation yet, no on-device run, no Kotlin port. |
+## Approach
 
-## Data
-
-- **Gold corpus**: `Luigi/voxsum-meeting-gold-zh` on Hugging Face (private). The dataset card describes it.
-  - 408 training sessions: 171 IVOD Legislative Yuan committee meetings and 237 AliMeeting meetings.
-  - 38 held-out IVOD sessions.
-  - Row kinds: `notes` (map, one window → notes), `synthesis` (numbered points) and `prose` (the final abstract).
-  - The gold went through QA rounds until a round produced no confirmed fix: Qwen3.8-Flash-Next proposed defects and Claude reviewed each one. The gold follows the noisy ASR and is never normalised to real-world facts.
-- Session splits: `data/split_v2.json`, with the held-out sessions under `heldout`.
-- IVOD terms are personal / non-commercial. The owner decides training and distribution use.
-
-## Evaluation
-
-The reference metric is **`eval/judge_prose_tx.py`**. It checks every cited sentence against the transcript, from 30 s before its citation to 150 s after. The judge is Gemma-4-31B, which never taught IVOD. Each sentence is labelled supported, contradicted or unsupported, and the **contradicted rate** is the headline.
-
-> `eval/judge_prose.py` judges against the gold *notes*. It counts true facts the gold omitted as fabrications, so use it for **coverage of the gold points** only.
-
-To judge notes, sample 25 notes per session into a prose-shaped run dir; the `nj25-*` dirs are built this way. Mechanical checks: `eval/score_v2.py` (validator and prose-gate pass rates, note-fact recall).
-
-Serving and judging:
+A **reading agent with an external journal**, driven by **Bonsai 2 27B**: the ternary Qwen3.8-27B from PrismML, packed as `PTQ1_0`, 5.95 GB. The model is used as is, with no fine-tuning. Reliability comes from the harness.
 
 ```
-JUDGE_SCRIPT=judge_prose_tx DIRS="runs/student/<run>" bash scripts/v2_judge.sh
+transcript ──► window 1 ──► window 2 ──► … ──► window N
+                  │            │                   │
+                  ▼            ▼                   ▼
+           ┌──────────────── journal (outside the context) ───────────────┐
+           │ #1 [12:04] (DECISION) …   #2 [15:30] …   #7 revised in w5 …  │
+           └──────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+            minutes: decisions · actions & owners · open items · overview
+                                      │
+                                      ▼
+                  each item re-checked against its cited lines
 ```
 
-The judge takes both GPUs (TP2); results are appended to `reports/v2_sft_night.txt`.
+### One reading turn
 
-## Findings
+Each turn sees three things:
 
-All figures below are on the 38 held-out sessions, as the share of statements contradicted by the transcript.
+- a **bounded view of the journal**: recent entries, entries sharing keywords with the current window, and a count of the rest;
+- the current transcript window (~6k tokens);
+- lines re-read with `LOOKBACK`, if the turn asked for any.
 
-| system | notes (map) | prose |
-|---|---|---|
-| gold (teacher map-reduce) | 6% | 11% |
-| MiniCPM5-2B SFT, paraphrased notes | 17% | 30% |
-| MiniCPM5-2B, evidence-first notes | 15% | – |
-| MiniCPM5-2B, **extractive** notes (speaker + verbatim span) | **9–10%** | – |
-| Gemma-4-E4B SFT notes | 13% | – |
-| MiniCPM5 evidence notes → Gemma-4-E4B reduce → prose guard | – | 25% |
-
-- **Where errors come from.** Reduce roughly doubles the error rate: gold notes are 7% contradicted, and student prose written from those same notes is about 20%. Paraphrasing is the other main source: the extractive map reaches 9–10%.
-- **No training method moved contradictions below the plateau** on 2–4B students. This covers GRPO, RFT and DPO with lexical, window-judge and transcript-judged rewards; verifiers; self-consistency; CAD; base/SFT interpolation; a teacher-assistant (E4B → 2B); and more data (the learning curve is flat).
-- **Best-of-4 prose picked by the judge reaches 21%**, but a 2B verifier cannot select it (45% accuracy).
-
-The detailed log is in the project memory and in `reports/`.
-
-## Reading agent (current work)
-
-`eval/journal_agent.py` reads the transcript once, window by window (~6k tokens). The agent's **journal** lives outside the context. Each turn sees a bounded view of it: the recent entries, the entries that share keywords with the window, and a count of the rest.
-
-Actions:
+The model answers with actions, one per line:
 
 | action | effect |
 |---|---|
-| `NOTE [ts] (TYPE) …` | add an entry |
-| `REVISE #id [ts] …` | rewrite an entry |
-| `LOOKBACK t1-t2` | re-read earlier lines (at most 2 per window) |
+| `NOTE [ts] (TYPE) text` | add a journal entry (`DECISION`, `ACTION`, `NUMBER`, `OPEN-ISSUE`, `-`) |
+| `REVISE #id [ts] text` | rewrite an entry that this window changes, e.g. held → passed |
+| `LOOKBACK t1-t2` | re-read earlier transcript lines, at most twice per window |
 | `NEXT` | move to the next window |
 
-After the last window the agent writes structured minutes:
+### Closing the meeting
 
-- 決議事項 (decisions)
-- 待辦與負責人 (actions and owners)
-- 保留與未決 (held and open items)
-- 會議概要 (overview)
+1. The whole journal becomes minutes in four sections:
+   - 決議事項 (decisions)
+   - 待辦與負責人 (actions and owners)
+   - 保留與未決 (held and open items)
+   - 會議概要 (overview)
 
-Every item is then verified against the transcript around its citation (Chain-of-Verification), with one isolated, short-context call per item.
+   Every item carries a timestamp.
+2. **Verification.** Each item is checked against the transcript around its citation, one short, isolated call per item. The item is kept, corrected, or dropped.
 
-Context and thinking management:
+### Context and thinking management
 
-- Turns are stateless.
-- `prompt + thinking budget + output ≤ 32k`; the journal view shrinks until a turn fits.
-- Thinking is capped server-side (`--reasoning-budget`) and returned separately (`--reasoning-format deepseek`). It is never fed back into a later turn.
+- **Stateless turns.** No chat history accumulates; state lives only in the journal.
+- **Hard fit.** For every call, `prompt + thinking budget + output ≤ 32k`. The journal view shrinks until the call fits.
+- **Budgeted thinking.** The server caps reasoning per turn (`--reasoning-budget`) and returns it separately (`--reasoning-format deepseek`). It is never fed back into a later turn.
 
-These ideas come from DeerFlow's context engineering (state offloaded to a store, isolated sub-agents, on-demand loading), implemented without its runtime: a phone runs neither LangGraph nor a sandbox.
+These principles come from DeerFlow's context engineering: state offloaded to a store, isolated sub-agents, and loading on demand. They are implemented as a small loop that can be ported to Kotlin on top of llama.cpp. DeerFlow's own runtime (LangGraph, sandbox) does not run on a phone.
 
-Run the agent against the PrismML llama.cpp fork, whose binaries are in `~/Bonsai-demo/bin/cuda`:
+## Run
 
-```
+Use the PrismML llama.cpp fork, which Bonsai 2 needs. `-c 65536 -np 2` gives two slots of 32k each.
+
+```bash
 llama-server -m Ternary-Bonsai-2-27B-PTQ1_0.gguf -ngl 99 -c 65536 -np 2 --jinja \
   --reasoning-format deepseek --reasoning-budget 768 --port 8091 --alias bonsai
-python3 eval/journal_agent.py --urls http://127.0.0.1:8091/v1 --think 768 --out runs/student/ja-bonsai2-think
+
+python3 eval/journal_agent.py --urls http://127.0.0.1:8091/v1 --think 768 \
+  --out runs/ja-bonsai2-think          # --think 0 with --reasoning-budget 0 for thinking off
 ```
 
-`-c 65536 -np 2` gives two slots of 32k.
+Each session writes its journal, the minutes, the verified minutes, call counts, the largest prompt, and thinking tokens.
+
+## Evaluation
+
+The metric is **`eval/judge_prose_tx.py`**. Every cited statement is checked against the transcript from 30 s before its citation to 150 s after, and labelled `supported`, `contradicted` or `unsupported`. Headline: the **contradicted rate**.
+
+The judge is Gemma-4-31B. It is independent of the teacher that produced the reference minutes.
+
+```bash
+JUDGE_SCRIPT=judge_prose_tx DIRS="runs/ja-bonsai2-think" bash scripts/v2_judge.sh
+```
+
+Reference points on the 38 held-out sessions, as the share of statements contradicted by the transcript:
+
+| system | contradicted |
+|---|---|
+| teacher minutes (gold) | 11% |
+| best earlier on-device pipeline (2B map → 4B reduce → guard) | 25% |
+| **Bonsai 2 27B journal agent** | *in progress* |
+
+## Why this direction
+
+Earlier work distilled small students (2–4B) for a map-reduce pipeline. Their contradiction rate plateaued at about 2–3× the teacher's under every training method tried: SFT, DPO, RFT, GRPO, verifiers, and more data. The two errors that dominated were paraphrasing misreadings and merging errors at reduce. A 27B model fits the device only because it is ternary, and it removes that capacity ceiling. The agent design keeps each call short, and lets later evidence correct earlier notes.
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `summarizer/` | pipeline (windowing, map/reduce prompts, note parsing), transcript ingest |
-| `distill/` | export of training rows, SFT (`sft_gemma.py`, works for Gemma/MiniCPM/Qwen), GRPO/DPO, data builders (evidence, extractive, verify, RFT), prose writer and gate, numerals |
-| `eval/` | runners (vLLM students, OpenAI-compatible API pipeline, single pass, journal agent), judges, filters and guard (`prose_guard.py`) |
-| `scripts/` | orchestration chains (`v2_*.sh`) |
-| `runs/` | teacher gold (`runs/v2/w4000`, `runs/alimeeting/w4000`), student outputs, adapters |
-| `deploy/` | merged HF checkpoints and GGUF exports (`deploy/gguf/*-Q4_K_M.gguf`) |
-| `site/` | corpus explorer (served on the tailnet, port 8323) |
+| `eval/journal_agent.py` | the reading agent |
+| `eval/judge_prose_tx.py`, `scripts/v2_judge.sh` | transcript-grounded judge |
+| `summarizer/` | transcript ingest, windowing, citation resolution |
+| `distill/`, `eval/` (others) | earlier distillation and evaluation work |
 
-## Operational notes
+## Status
 
-- **Disk**: delete `runs/merged/` after evaluation. Merged checkpoints are regenerable, and a full disk once broke two evaluations.
-- **Orphaned vLLM engines**: they can hold a GPU after `os._exit`. Free the GPU with `nvidia-smi --query-compute-apps=pid` and kill those pids. Never `pkill -f` a pattern that matches your own shell.
-- **Flash-Next** (local, FreeToken): one instance per RTX 5090, on ports 1919 and 2919.
+This is research, not production. Still to do:
+
+- human evaluation;
+- measurement on the phone (memory, speed, heat);
+- the Kotlin port.
