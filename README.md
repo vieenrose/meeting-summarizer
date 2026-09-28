@@ -10,19 +10,16 @@ The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR. The output 
 
 A **reading agent with an external journal**, driven by **Bonsai 2 27B**: the ternary Qwen3.8-27B from PrismML, packed as `PTQ1_0`, 5.95 GB. The model is used as is, with no fine-tuning. Reliability comes from the harness.
 
-```
-transcript ──► window 1 ──► window 2 ──► … ──► window N
-                  │            │                   │
-                  ▼            ▼                   ▼
-           ┌──────────────── journal (outside the context) ───────────────┐
-           │ #1 [12:04] (DECISION) …   #2 [15:30] …   #7 revised in w5 …  │
-           └──────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-            minutes: decisions · actions & owners · open items · overview
-                                      │
-                                      ▼
-                  each item re-checked against its cited lines
+```mermaid
+flowchart LR
+    T[ASR transcript<br/>1.5–3 h] --> W[windows<br/>~6k tokens each]
+    W --> R{{reading turn<br/>≤ 32k ctx}}
+    R -- NOTE / REVISE --> J[(journal<br/>outside the context)]
+    J -- bounded view --> R
+    R -- LOOKBACK --> T
+    J --> M[minutes<br/>決議 · 待辦 · 保留 · 概要]
+    M --> V{{verify each item<br/>against cited lines}}
+    V --> O[verified minutes<br/>every item cited]
 ```
 
 ### One reading turn
@@ -53,7 +50,39 @@ The model answers with actions, one per line:
    Every item carries a timestamp.
 2. **Verification.** Each item is checked against the transcript around its citation, one short, isolated call per item. The item is kept, corrected, or dropped.
 
+```mermaid
+sequenceDiagram
+    participant H as harness
+    participant J as journal
+    participant B as Bonsai 2 27B
+    loop every window
+        H->>J: view (recent + keyword-matched entries)
+        H->>B: system + journal view + window (fits 32k)
+        B-->>H: NOTE / REVISE / LOOKBACK / NEXT
+        H->>J: append or rewrite entries
+        opt LOOKBACK (≤ 2 per window)
+            H->>B: same turn + earlier lines
+        end
+    end
+    H->>B: whole journal → sectioned minutes
+    loop every minutes item
+        H->>B: item + transcript around its citation
+        B-->>H: keep / fix / drop
+    end
+```
+
 ### Context and thinking management
+
+```mermaid
+pie showData title One reading turn, tokens (32k cap)
+    "instructions" : 1500
+    "journal view (≤ 12k, shrinks to fit)" : 12000
+    "transcript window" : 6000
+    "LOOKBACK lines" : 4000
+    "thinking budget" : 768
+    "action output" : 1500
+    "headroom" : 7000
+```
 
 - **Stateless turns.** No chat history accumulates; state lives only in the journal.
 - **Hard fit.** For every call, `prompt + thinking budget + output ≤ 32k`. The journal view shrinks until the call fits.
