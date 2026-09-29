@@ -8,7 +8,7 @@ The input is a zh-TW meeting of 1.5–3.5 h, transcribed by on-device ASR. The o
 
 ## Architecture
 
-A **realtime reading agent** runs on a ~2B Q4_0 model. The agent protocol is designed and validated with **Qwen3.8-27B**, which serves as the quality reference and, later, as the teacher. The ~2B candidates run the *same* protocol, so the 27B's traces can be used directly for fine-tuning.
+A **realtime reading agent** runs on the phone with **Gemma-4-E2B (QAT, Q4_0)**, the student chosen by the bake-off below. The agent protocol is designed and validated with **Qwen3.8-27B**, which serves as the quality reference and, later, as the teacher. Every candidate runs the *same* protocol, so the 27B's traces can be used directly for fine-tuning.
 
 ```mermaid
 flowchart LR
@@ -67,11 +67,31 @@ The harness also guards against a small model's loops:
 - a note or revision that repeats an existing note is rejected (bigram Jaccard > 0.6);
 - a citation must resolve to a transcript line.
 
-### Incremental (chunked) prefill — next step
+### Incremental (chunked) prefill
 
-Prefilling a window only when it closes leaves the CPU idle while people talk. The next version prefills each ASR segment as soon as it arrives. The segment is appended as token IDs through `/completion` with `n_predict: 0`, and the user turn stays open until the window closes. When the window closes, only the check and the decode remain.
+Prefilling a window only when it closes leaves the CPU idle while people talk. With incremental prefill, each ASR segment is prefilled as soon as it arrives:
+- the harness renders the chat template around a placeholder (`/apply-template`);
+- it appends each segment as token IDs through `/completion`, with `n_predict: 0`;
+- it keeps the user turn open until the window closes.
 
-This changes no output, because the same tokens are computed. It only moves prefill into the wait. On the Reno7, prefill speed barely depends on chunk size:
+When the window closes, only the check and the decode remain. The same tokens are computed, so no output changes; prefill simply moves into the wait. Managing the token sequence directly also avoids chat templates that re-render the history differently from what was generated. That problem is why MiniCPM5 and LFM2.5 lost their cache in chat mode.
+
+`eval/incremental_prefill_test.py` checks this on every candidate (upstream llama.cpp). The window is about 3.5k tokens fed as 15 chunks. It is compared against a one-shot prefill of the same tokens.
+
+| model | recomputed / new tokens | turn close | KL, first token | same first token |
+|---|---|---|---|---|
+| Gemma-4-E2B | 3530 / 3520 | 5 / 5 | 0.022 | ✅ |
+| Gemma-4-E2B `--swa-full` | 3520 / 3520 | 5 / 5 | 0.017 | ✅ |
+| Qwen3.5-2B | 3447 / 3447 | 9 / 9 | 0.004 (CPU 0.001) | ✅ |
+| MiniCPM5-2B | 3488 / 3488 | 9 / 9 | 0.001 (CPU 0.0005) | ✅ |
+| LFM2.5-2.6B | 3471 / 3471 | 6 / 6 | 0.023 (CPU 0.001) | ✅ |
+| LFM2.5-1.2B | 4174 / 4174 | 5 / 5 | 0.001 | ✅ |
+| LFM2.5-8B-A1B | 3471 / 3471 | 5 / 5 | 0.000 | ✅ |
+
+- Greedy outputs can drift after 20–80 tokens. This is float rounding between the kernel paths for small and large batches, amplified by near-ties between tokens; it is smaller on CPU.
+- Gemma's sliding-window attention recomputes a few tokens; `--swa-full` makes the reuse exact.
+
+On the Reno7, prefill speed barely depends on chunk size:
 
 | chunk (tokens) | 32 | 64 | 128 | 256 | 512 |
 |---|---|---|---|---|---|
@@ -103,6 +123,26 @@ Two known weaknesses:
 - The model attributes statements to bodies the excerpt does not name, for example "財政部說明…" when the speaker labels only say S1.
 - The overview synthesizes passages far from its citations.
 
+### Bake-off: which ~2B Q4_0 drives the agent
+
+The candidates run the same agent on the same 10 held-out sessions and face the same judge. The phone lag is modelled from each run's token counts and the model's measured Reno7 speed.
+
+| model | notes contradicted | notes unsupported | minutes contradicted | coverage | gold decisions recalled | well-formed actions | max phone lag |
+|---|---|---|---|---|---|---|---|
+| *Qwen3.8-27B (reference)* | *10 %* | *24 %* | *11 %* | *0.88* | *73 %* | 100 % | 2.6 min |
+| **Gemma-4-E2B QAT Q4_0** | **17 %** | **9 %** | **21 %** | **0.77** | **57 %** | 100 % | 15.6 min |
+| MiniCPM5-2B | 22 % | 9 % | 21 % | 0.33 | 0 % | 100 % | 220 min † |
+| Qwen3.5-2B | 22 % | 36 % | 28 % | 0.29 | 16 % | 100 % | 5.6 min |
+| LFM2.5-2.6B | 24 % | 10 % | 28 % | 0.12 | 7 % | 83 % | 122 min † |
+| LFM2.5-8B-A1B | 15 % | 29 % | 35 % | 0.07 | 16 % | 52 % | 30 min |
+| LFM2.5-1.2B | 59 % | 32 % | — | 0.00 | 0 % | 44 % | 2.5 min |
+
+† No cache reuse in chat mode: the chat template re-renders earlier turns differently. The token-level harness removes this (see incremental prefill).
+
+**Gemma-4-E2B is locked as the student.** It is the only ~2B model that covers the meeting (0.77 against ≤ 0.33 for the others), and it is also the most faithful.
+
+Its weakness is volume: 121 notes per session against 64 for the 27B. The decoding of all those notes is what puts it 15 min behind on the phone.
+
 ### Phone budget
 
 A 3.5 h meeting needs about **55k tokens of prefill** in total, restarts included. The previous stateless agent needed about 180k.
@@ -127,9 +167,14 @@ Q4_0 beats Q4_K_M (−15 to −23 % prefill) and Q8_0 on this CPU. A 27B, even t
 
 ## Plan
 
-1. **Bake-off.** Every ~2B candidate runs the same agent on the same sessions and faces the same judge. They are ranked by contradiction rate, under the realtime constraint. This step is running.
-2. **Fine-tuning.** Distill the best 2B on the 27B's agent traces from the training sessions, never from held-out ones. The trace format is the same one the student will run, so no conversion is needed.
-3. **Incremental prefill.** Implement it, then measure it on the phone with the upstream llama.cpp Android build, the ASR running alongside, and a hot, throttled CPU.
+1. **Harness tuning for Gemma-4-E2B, with no fine-tuning** (in progress):
+   - iterate on a dev set of 8 training sessions, and keep the held-out sessions for the final measure;
+   - reduce the note volume;
+   - make the check turn effective (so far it almost always answers `OK`);
+   - forbid attributions the excerpt does not state;
+   - move to the token-level harness with incremental prefill.
+2. **Fine-tuning.** Distill Gemma-4-E2B on the 27B's agent traces from the training sessions, with a LoRA on the QAT weights, then requantize to Q4_0. The trace format is the one the student runs.
+3. **On the device.** Measure on the Reno7 with the upstream llama.cpp Android build, the ASR running alongside, and a hot, throttled CPU.
 
 ## Run
 
@@ -158,6 +203,7 @@ Each session record stores the notes, the minutes and a trace of every call. Eac
 | `eval/rt_report.py`, `eval/minutes_report.py` | bake-off table, per-section report, phone timing model |
 | `eval/judge_prose_tx.py`, `scripts/v2_judge.sh` | transcript-grounded judge |
 | `scripts/rt_bakeoff2.sh`, `scripts/rt_judge_one.sh` | bake-off and judging runners |
+| `eval/incremental_prefill_test.py` | per-model check of incremental prefill (cache reuse, output agreement) |
 | `eval/journal_agent.py` | earlier stateless journal agent (full re-prefill per turn) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
 | `distill/`, other `eval/` | earlier map-reduce distillation and evaluation work |
@@ -166,4 +212,4 @@ Data (transcripts, gold minutes, runs) is not included.
 
 ## Status
 
-Research, not production. Still to do: the bake-off results, the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.
+Research, not production. Still to do: harness tuning, the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.

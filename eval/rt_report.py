@@ -8,7 +8,8 @@ import os
 
 # Reno7 CPU, 8 threads, Q4_0, llama-bench pp512 / tg32 (tok/s).
 PHONE = {"q35-2b": (40.4, 8.8), "lfm25-2.6b": (35.0, 8.0), "minicpm5-2b": (33.5, 9.2),
-         "gemma4-e2b": (34.6, 7.0), "lfm25-1.2b": (78.1, 18.2), "lfm25-8b-a1b": (24.5, 9.0)}
+         "gemma4-e2b": (34.6, 7.0), "lfm25-1.2b": (78.1, 18.2), "lfm25-8b-a1b": (24.5, 9.0),
+         "apodex-2b": (34.8, 8.3)}  # Qwen3.5-2B Q4_K_M: same architecture
 
 
 def tx(name):
