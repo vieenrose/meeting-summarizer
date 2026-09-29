@@ -137,6 +137,7 @@ class Session:
         self.phone_pp, self.phone_tg = PHONE_PP, PHONE_TG
         self.nothink = False
         self.system, self.quote, self.max_actions = SYSTEM, False, MAX_ACTIONS
+        self.restart_budget, self.read_max_tokens = 0, OUTPUT_TOKENS
 
     def chat(self, content, max_tokens=OUTPUT_TOKENS, keep=True, stop_next=False):
         msgs = self.msgs + [{"role": "user", "content": content}]
@@ -179,8 +180,25 @@ class Session:
 
     def restart(self, journal):
         self.restarts += bool(self.msgs)
+        kept = [e for e in journal if not e.get("dropped")]
+        if self.restart_budget and kept:
+            # A long meeting's journal makes every restart a multi-minute prefill on the phone.
+            # Keep decisions, open issues and actions first (newest first), then recent notes.
+            key = {"DECISION": 0, "OPEN-ISSUE": 1, "ACTION": 2}
+            order = sorted(range(len(kept)), key=lambda i: (key.get((kept[i]["tag"] or "").upper(), 3), -i))
+            chosen, used = set(), 0
+            for i in order:
+                t = self.count(render(kept[i]))
+                if used + t > self.restart_budget:
+                    continue
+                chosen.add(i)
+                used += t
+            rest = len(kept) - len(chosen)
+            text = "\n".join(render(kept[i]) for i in sorted(chosen)) + (f"\n（另有 {rest} 則較早的筆記未列出）" if rest else "")
+        else:
+            text = "\n".join(map(render, kept))
         self.msgs = [{"role": "system", "content": self.system},
-                     {"role": "user", "content": "## 筆記本（至今）\n" + ("\n".join(map(render, journal)) or "（尚無筆記）")},
+                     {"role": "user", "content": "## 筆記本（至今）\n" + (text or "（尚無筆記）")},
                      {"role": "assistant", "content": "NEXT"}]
         self.ctx_used = self.count(json.dumps(self.msgs, ensure_ascii=False))
 
@@ -229,7 +247,7 @@ def run_session(s, text, check=True, overview_mode="llm", number_section=False):
             s.restart(journal)
         user, n_lb, before = f"## 逐字稿片段 {k}\n{block}", 0, len(journal)
         while True:
-            reply, pp, tg = s.chat(user, stop_next=True)
+            reply, pp, tg = s.chat(user, max_tokens=s.read_max_tokens, stop_next=True)
             clock += cost(pp, tg)
             trace.append({"window": k, "arrive": arrive, "pp": pp, "tg": tg, "reply": reply})
             proto["lines"] += sum(1 for x in reply.splitlines() if x.strip())
@@ -331,6 +349,9 @@ def main():
                          "v3: v2 without asking for quotes; v4: v3 with checked quotes on DECISION and NUMBER only")
     ap.add_argument("--overview", default="llm", choices=["llm", "none"])
     ap.add_argument("--number-section", action="store_true", help="add NUMBER notes to the minutes")
+    ap.add_argument("--read-max-tokens", type=int, default=OUTPUT_TOKENS, help="output cap of a reading turn")
+    ap.add_argument("--restart-journal-tokens", type=int, default=0,
+                    help="compact the journal to this many tokens at a restart (0: whole journal)")
     ap.add_argument("--phone-pp", type=float, default=PHONE_PP, help="phone prefill tok/s for the timing model")
     ap.add_argument("--phone-tg", type=float, default=PHONE_TG, help="phone decode tok/s for the timing model")
     a = ap.parse_args()
@@ -357,6 +378,7 @@ def main():
         s = Session(a.url, a.model, slot, count)
         s.phone_pp, s.phone_tg = a.phone_pp, a.phone_tg
         s.nothink = a.nothink_prefill
+        s.restart_budget, s.read_max_tokens = a.restart_journal_tokens, a.read_max_tokens
         if a.harness == "v1":
             s.system, s.quote, s.max_actions = SYSTEM_V1, True, 4
         elif a.harness == "v2":

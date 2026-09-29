@@ -215,7 +215,14 @@ The student learns the teacher's selection: 7 more points of gold decisions reca
 
 - SFT reliably improves decision recall (+5 points over 218 gold decisions). Minutes faithfulness does not change.
 - Realtime holds for the median session. The worst case is one 4-hour meeting, where the fine-tuned model hit the 1,000-token output cap 16 times, and each of the 4 restarts reloads a journal of more than 130 notes (5–6k tokens, about 2.5 min of phone prefill).
-- Fixes identified: cap reading-turn output at 400 tokens, compact the journal at restart, and prefill the restart context in the background on a second slot.
+- Two fixes, `--read-max-tokens 400` and `--restart-journal-tokens 2500`, bring the worst session from 51.7 to 16.7 min, with no loss of quality. Faithfulness, coverage and recall are unchanged within noise; the compacted journal keeps decisions, open issues and actions first, then the most recent notes.
+
+| SFT model, 38 sessions | minutes contradicted | coverage | gold decisions | phone lag median / p90 / max | with incremental prefill |
+|---|---|---|---|---|---|
+| v3x | 18 % | 0.89 | 77 % | 2.5 / 3.0 / 51.7 min | 0.7 / 2.6 / 50.8 min |
+| **v3x + cap 400 + compact restart** | 18 % | **0.91** | **77 %** | 2.6 / 3.0 / **16.7** min | **0.8 / 2.0 / 15.7** min |
+
+  The remaining worst case is a dense 4-hour meeting, where speech arrives faster than a 2B model on this CPU can read it. Prefilling the restart context in the background on a second slot is the next fix.
 
 **A mechanical number check does not help measurably.** `eval/number_check.py` keeps a note only if every number it states is said within 90 s of its timestamp; it parses Arabic and Chinese numerals, including 萬 and 億. It drops 3–5 % of notes and moves the key figures from 25 % to 22 % contradicted, but leaves the minutes at 19 %.
 
@@ -262,6 +269,11 @@ python3 eval/realtime_agent.py --url http://127.0.0.1:8120/v1 --model q38 \
 llama-server -m Qwen3.5-2B-Q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --port 8110 --alias rt
 python3 eval/realtime_agent.py --url http://127.0.0.1:8110/v1 --model rt --parallel 4 \
   --phone-pp 40.4 --phone-tg 8.8 --out runs/student/rt-q35-2b
+
+# the deployment configuration for Gemma-4-E2B (tuned harness, output cap, compact restarts)
+python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 \
+  --harness v3 --no-check --overview none --number-section --read-max-tokens 400 \
+  --restart-journal-tokens 2500 --phone-pp 34.6 --phone-tg 7.0 --out runs/student/h38-gemma4-e2b
 
 bash scripts/rt_bakeoff2.sh                 # all candidates, two at a time
 bash scripts/rt_judge_one.sh q38-27b q35-2b  # judge notes + minutes, coverage, per-section report
