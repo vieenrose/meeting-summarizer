@@ -322,6 +322,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--parallel", type=int, default=4, help="must not exceed the server's -np")
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--split-key", default="heldout", help="which session list of --split to run")
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--nothink-prefill", action="store_true", help="for models that always think")
     ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4"],
@@ -378,7 +379,7 @@ def main():
                 f"meeting {timing['meeting_s'] / 60:.0f} min, worst lag {timing['worst_lag_s'] / 60:.1f} min, "
                 f"minutes {timing['after_end_s'] / 60:.1f} min after end")
 
-    sids = a.only or json.load(open(a.split))["heldout"]
+    sids = a.only or json.load(open(a.split))[a.split_key]
     with ThreadPoolExecutor(a.parallel) as ex:
         for line in ex.map(one, enumerate(sids)):
             print(line, flush=True)

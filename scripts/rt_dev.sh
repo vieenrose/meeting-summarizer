@@ -16,8 +16,12 @@ if ! curl -sf localhost:8700/v1/models >/dev/null; then
   echo $! > logs/judge_dev.pid
   until curl -sf localhost:8700/v1/models >/dev/null; do sleep 15; done
 fi
-if ! curl -sf localhost:8140/health >/dev/null; then
-  CUDA_VISIBLE_DEVICES=1 ~/llama.cpp/build-cuda/bin/llama-server -m ~/Bonsai-demo/models/small/gemma4e2b/gemma-4-E2B_q4_0-it.gguf \
+MODEL=${MODEL:-~/Bonsai-demo/models/small/gemma4e2b/gemma-4-E2B_q4_0-it.gguf}
+# (re)start the student when it is down or serves another model
+if ! curl -sf localhost:8140/health >/dev/null || [ "$(cat logs/dev_student.model 2>/dev/null)" != "$MODEL" ]; then
+  kill $(cat logs/dev_student.pid 2>/dev/null) 2>/dev/null; sleep 5
+  echo "$MODEL" > logs/dev_student.model
+  CUDA_VISIBLE_DEVICES=1 ~/llama.cpp/build-cuda/bin/llama-server -m $MODEL \
     -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt > logs/dev_student.log 2>&1 &
   echo $! > logs/dev_student.pid
   until curl -sf localhost:8140/health >/dev/null; do sleep 3; done

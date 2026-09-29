@@ -179,6 +179,33 @@ Held-out result (10 sessions, same judge as the bake-off). v3x is `--harness v3 
 
 With zero fine-tuning, the tuned harness makes Gemma-4-E2B keep pace with the meeting on the phone and cover the meeting as well as the 27B. Faithfulness is still short of the 27B: 18 % of minutes contradicted, against 11 %. The weakest section is the key figures, at 25 % contradicted (wrong amounts and article numbers). This gap is the target of the fine-tuning.
 
+### Distillation from the 27B
+
+**Teacher traces.** Qwen3.8-27B (NInfer, one instance per RTX 5090) ran the tuned v3x protocol on 163 training sessions. These exclude the held-out and dev sessions. It took about 20 min.
+- The judge then checked all 7,873 teacher notes against the transcript: 9 % contradicted, 16 % unsupported.
+- A reading turn with any contradicted note is left out of the loss, which keeps 2,759 of 3,403 turns.
+- `distill/build_agent_sft.py` replays each session as the conversation the student lives through. It restarts from the journal at 14k tokens, which gives 677 segments with the loss on every kept turn.
+
+**Training.** `distill/sft_agent.py` trains a LoRA (r = 16) on the language model of the Gemma-4-E2B QAT weights, for 2 epochs on one RTX 5090 in about 70 min. Validation loss falls from 0.98 to 0.65. `distill/merge_agent_lora.py` merges each epoch, converts it and requantizes it to Q4_0. The base alone through the same path gives a Q4_0 of the same size as Google's QAT GGUF, and scores the same on the dev set.
+
+The epoch was chosen on dev: epoch 1 had 17 % of minutes contradicted, epoch 2 had 20 %. Held-out result, tuned harness v3x in both columns:
+
+| | Gemma-4-E2B | **Gemma-4-E2B + agent SFT** | Qwen3.8-27B |
+|---|---|---|---|
+| minutes contradicted | 18 % | 19 % | 11 % |
+| notes contradicted | 19 % | **17 %** | 10 % |
+| notes unsupported | 9 % | **7 %** | 24 % |
+| coverage | 0.91 | **0.93** | 0.88 |
+| gold decisions recalled | 59 % | **66 %** | 73 % |
+| notes per session | 100 | 90 | 64.5 |
+| max phone lag | 3.4 min | 3.5 min (2.3 incremental) | — |
+
+The student learns the teacher's selection: 7 more points of gold decisions recalled, and slightly more faithful notes. Its reading errors stay. Most remaining contradictions are relational: the right number attached to the wrong year, scope or body. The key-figures section is still the worst, at 22–25 %.
+
+**A mechanical number check does not help measurably.** `eval/number_check.py` keeps a note only if every number it states is said within 90 s of its timestamp; it parses Arabic and Chinese numerals, including 萬 and 億. It drops 3–5 % of notes and moves the key figures from 25 % to 22 % contradicted, but leaves the minutes at 19 %.
+
+**Noise floor.** With 10 sessions and 25 sampled notes per session, differences of 1–2 points are noise: removing notes shifted the sampled-notes rate by 2 points on its own. The gains that stand out from the noise are the realtime fix, coverage, and decision recall. Faithfulness has not moved beyond about 18 % with a 2B model so far.
+
 ### Phone budget
 
 A 3.5 h meeting needs about **55k tokens of prefill** in total, restarts included. The previous stateless agent needed about 180k.
@@ -203,9 +230,11 @@ Q4_0 beats Q4_K_M (−15 to −23 % prefill) and Q8_0 on this CPU. A 27B, even t
 
 ## Plan
 
-1. **Teacher traces** (running). Qwen3.8-27B (NInfer) runs the tuned protocol on the training sessions, excluding the held-out and dev sessions. Its notes are then checked against the transcript by the judge, and turns with contradicted notes are filtered out.
-2. **Fine-tuning.** LoRA on the Gemma-4-E2B QAT weights over the filtered traces, then requantize to Q4_0. It is evaluated on the same held-out sessions.
-3. **On the device.** Run the token-level harness with incremental prefill on the Reno7, using the upstream llama.cpp Android build, with the ASR running alongside and a hot, throttled CPU.
+1. **Faithfulness.** The 2B remains at about 18 % of minutes contradicted, against 11 % for the 27B. Options:
+   - on-policy correction: the student's own notes, fixed by the teacher, then DPO;
+   - more teacher sessions (AliMeeting);
+   - an evaluation with more sessions, to see gains below 2 points.
+2. **On the device.** Run the token-level harness with incremental prefill on the Reno7, using the upstream llama.cpp Android build, with the ASR running alongside and a hot, throttled CPU.
 
 ## Run
 
@@ -235,6 +264,9 @@ Each session record stores the notes, the minutes and a trace of every call. Eac
 | `eval/judge_prose_tx.py`, `scripts/v2_judge.sh` | transcript-grounded judge |
 | `scripts/rt_bakeoff2.sh`, `scripts/rt_judge_one.sh` | bake-off and judging runners |
 | `scripts/rt_dev.sh` | one harness-tuning iteration on the dev split (or, with `PREFIX=rt SPLIT=…`, on held-out) |
+| `distill/build_agent_sft.py`, `distill/sft_agent.py`, `distill/merge_agent_lora.py` | agent-trace SFT data, LoRA training, merge → Q4_0 GGUF |
+| `scripts/rt_teacher_traces.sh`, `scripts/sft_agent_night.sh` | teacher traces with judging; train → merge → dev → held-out pipeline |
+| `eval/number_check.py` | mechanical check of the numbers in notes against the transcript |
 | `eval/incremental_prefill_test.py` | per-model check of incremental prefill (cache reuse, output agreement) |
 | `eval/journal_agent.py` | earlier stateless journal agent (full re-prefill per turn) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
@@ -244,4 +276,4 @@ Data (transcripts, gold minutes, runs) is not included.
 
 ## Status
 
-Research, not production. Still to do: the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.
+Research, not production. Still to do: closing the faithfulness gap, incremental prefill on the device, human evaluation, and the Kotlin port.
