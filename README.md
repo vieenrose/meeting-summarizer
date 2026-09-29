@@ -202,6 +202,21 @@ The epoch was chosen on dev: epoch 1 had 17 % of minutes contradicted, epoch 2 h
 
 The student learns the teacher's selection: 7 more points of gold decisions recalled, and slightly more faithful notes. Its reading errors stay. Most remaining contradictions are relational: the right number attached to the wrong year, scope or body. The key-figures section is still the worst, at 22–25 %.
 
+**On all 38 held-out sessions**, which gives a lower noise floor:
+
+| | Gemma-4-E2B v3x | Gemma-4-E2B v3x + agent SFT |
+|---|---|---|
+| minutes contradicted | 18 % | 18 % |
+| notes contradicted | 19 % | 17 % |
+| coverage | 0.93 | 0.89 |
+| gold decisions recalled | 72 % (157/218) | **77 %** (167/218) |
+| median phone lag | 2.6 min | 2.5 min |
+| worst session (4 h meeting) | 17.5 min | 51.7 min |
+
+- SFT reliably improves decision recall (+5 points over 218 gold decisions). Minutes faithfulness does not change.
+- Realtime holds for the median session. The worst case is one 4-hour meeting, where the fine-tuned model hit the 1,000-token output cap 16 times, and each of the 4 restarts reloads a journal of more than 130 notes (5–6k tokens, about 2.5 min of phone prefill).
+- Fixes identified: cap reading-turn output at 400 tokens, compact the journal at restart, and prefill the restart context in the background on a second slot.
+
 **A mechanical number check does not help measurably.** `eval/number_check.py` keeps a note only if every number it states is said within 90 s of its timestamp; it parses Arabic and Chinese numerals, including 萬 and 億. It drops 3–5 % of notes and moves the key figures from 25 % to 22 % contradicted, but leaves the minutes at 19 %.
 
 **Noise floor.** With 10 sessions and 25 sampled notes per session, differences of 1–2 points are noise: removing notes shifted the sampled-notes rate by 2 points on its own. The gains that stand out from the noise are the realtime fix, coverage, and decision recall. Faithfulness has not moved beyond about 18 % with a 2B model so far.

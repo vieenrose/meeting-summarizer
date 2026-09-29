@@ -72,7 +72,7 @@ def main():
         cov = json.load(open(cov_p))["coverage"] if os.path.exists(cov_p) else None
         lag = after = lagc = afterc = ""
         speed = PHONE.get(tag, PHONE["q35-2b"] if tag == "q38-27b" else
-                          PHONE["gemma4-e2b"] if tag.startswith(("dev-", "gemma4-e2b")) else None)  # 27B: its token volume at 2B speed
+                          PHONE["gemma4-e2b"] if tag.startswith(("dev-", "gemma4-e2b", "h38-")) else None)  # 27B: its token volume at 2B speed
         if speed:
             ts = [timing(r["trace"], r["timing"]["meeting_s"], *speed) for r in recs]
             tc = [timing_chunked(r["trace"], r["timing"]["meeting_s"], *speed) for r in recs]
