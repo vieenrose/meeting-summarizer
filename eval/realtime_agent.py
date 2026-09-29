@@ -20,6 +20,7 @@ the report gives, per session, the worst lag behind the live meeting and the wai
 import argparse
 import json
 import os
+import queue
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -260,11 +261,22 @@ def main():
     count = lambda t: len(tok.encode(t, add_special_tokens=False))  # noqa: E731
     os.makedirs(a.out, exist_ok=True)
 
+    slots = queue.Queue()                           # each session owns one server slot while it runs
+    for k in range(a.parallel):
+        slots.put(k)
+
     def one(i_sid):
         i, sid = i_sid
         if os.path.exists(os.path.join(a.out, sid + ".json")):
             return f"skip {sid}"
-        s = Session(a.url, a.model, i % a.parallel, count)
+        slot = slots.get()
+        try:
+            return run_one(sid, slot)
+        finally:
+            slots.put(slot)
+
+    def run_one(sid, slot):
+        s = Session(a.url, a.model, slot, count)
         s.phone_pp, s.phone_tg = a.phone_pp, a.phone_tg
         s.nothink = a.nothink_prefill
         text = open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8").read()
