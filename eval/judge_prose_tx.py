@@ -74,8 +74,10 @@ def main():
     ap.add_argument("--judge-model", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--parallel", type=int, default=8)
+    ap.add_argument("--think", action="store_true", help="let the judge think (model default template)")
     args = ap.parse_args()
-    chat = ChatClient(args.judge_url, args.judge_model, max_tokens=300)
+    chat = (ChatClient(args.judge_url, args.judge_model, max_tokens=6000, no_chat_template_kwargs=True) if args.think
+            else ChatClient(args.judge_url, args.judge_model, max_tokens=300))
     jobs = []
     for sid in json.load(open(args.split))["heldout"]:
         p = os.path.join(args.candidate, sid + ".json")
@@ -92,12 +94,14 @@ def main():
         if ex is None:
             return {"id": sid, "sentence": s, "verdict": "uncited"}
         for _ in range(3):
-            m = re.search(r"\{.*\}", chat([{"role": "user", "content": PROMPT.format(excerpt=ex, sentence=s)}]), re.S)
+            reply = chat([{"role": "user", "content": PROMPT.format(excerpt=ex, sentence=s)}])
+            # With thinking on, the reasoning may hold braces of its own: take the last verdict object.
+            found = re.findall(r"\{[^{}]*\"verdict\"[^{}]*\}", re.sub(r"<think>.*?</think>", "", reply, flags=re.S))
             try:
-                v = json.loads(m.group(0))
+                v = json.loads(found[-1])
                 if v.get("verdict") in ("supported", "contradicted", "unsupported"):
                     return {"id": sid, "sentence": s, **v}
-            except (AttributeError, json.JSONDecodeError):
+            except (IndexError, json.JSONDecodeError):
                 pass
         return {"id": sid, "sentence": s, "verdict": "unparsed"}
 

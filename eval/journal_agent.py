@@ -81,9 +81,17 @@ class Agent:
         returned apart (reasoning_content); it is counted, never fed back into any later turn."""
         self.calls += 1
         self.max_prompt = max(self.max_prompt, sum(self.count(m["content"]) for m in messages))
-        r = requests.post(self.url + "/chat/completions", timeout=1800, json={
-            "model": self.model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens + self.think,
-            "chat_template_kwargs": {"enable_thinking": self.think > 0}}).json()
+        for attempt in range(4):  # the server's output parser can reject a sample; resample hotter,
+            # and last ask for the raw text (reasoning left inline, stripped below)
+            r = requests.post(self.url + "/chat/completions", timeout=1800, json={
+                "model": self.model, "messages": messages, "temperature": 0.2 + 0.3 * min(attempt, 2),
+                "max_tokens": max_tokens + self.think,
+                "chat_template_kwargs": {"enable_thinking": self.think > 0},
+                **({"reasoning_format": "none"} if attempt == 3 else {})}).json()
+            if "choices" in r:
+                break
+        if "choices" not in r:
+            raise RuntimeError(f"server error: {str(r)[:500]} (prompt ~{self.max_prompt} tok)")
         msg = r["choices"][0]["message"]
         if msg.get("reasoning_content"):
             self.think_tokens += self.count(msg["reasoning_content"])
@@ -181,7 +189,10 @@ def run_session(agent, text):
         v = agent.chat([{"role": "user", "content": VERIFY.format(item=line, excerpt=ex)}], max_tokens=400)
         if v.strip().startswith("刪除"):
             continue
-        verified.append(v if v.startswith("- ") else "- " + v)
+        v = v if v.startswith("- ") else "- " + v
+        if not CITE.search(v):              # the verifier rewrote the item and dropped its citation
+            v = v.rstrip("。 ") + " " + " ".join(f"[{t}]" for t in ts)
+        verified.append(v)
     return journal, minutes, "\n".join(verified), trace
 
 

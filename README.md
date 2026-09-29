@@ -1,144 +1,169 @@
 # meeting-summarizer
 
-Reliable minutes for long meetings, produced **on the phone**.
+Minutes of a long meeting, written **live, on the phone**, while the meeting is going on.
 
-The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR. The output is structured minutes in which every item cites the transcript line it rests on.
+The input is a zh-TW meeting of 1.5–3.5 h, transcribed by on-device ASR. The output is structured minutes. Every item cites the transcript line it rests on.
 
-**Device budget:** peak RSS ≤ 6 GB, and every model call fits a context of ≤ 32k tokens.
+**Target device:** OPPO Reno7 (Dimensity 900, 8 GB), with CPU-only llama.cpp. Every model call fits a context of ≤ 32k tokens, and the agent must keep pace with the meeting as it happens.
 
-## Approach
+## Architecture
 
-A **reading agent with an external journal**, driven by **Bonsai 2 27B**: the ternary Qwen3.8-27B from PrismML, packed as `PTQ1_0`, 5.95 GB. The model is used as is, with no fine-tuning. Reliability comes from the harness.
+A **realtime reading agent** runs on a ~2B Q4_0 model. The agent protocol is designed and validated with **Qwen3.8-27B**, which serves as the quality reference and, later, as the teacher. The ~2B candidates run the *same* protocol, so the 27B's traces can be used directly for fine-tuning.
 
 ```mermaid
 flowchart LR
-    T[ASR transcript<br/>1.5–3 h] --> W[windows<br/>~6k tokens each]
-    W --> R{{reading turn<br/>≤ 32k ctx}}
-    R -- NOTE / REVISE --> J[(journal<br/>outside the context)]
-    J -- bounded view --> R
-    R -- LOOKBACK --> T
-    J --> M[minutes<br/>決議 · 待辦 · 保留 · 概要]
-    M --> V{{verify each item<br/>against cited lines}}
-    V --> O[verified minutes<br/>every item cited]
+    A[live ASR] --> S[transcript segments]
+    S --> W[window closes<br/>~2k tokens · ~4 min of speech]
+    W --> R{{reading turn<br/>NOTE · REVISE · LOOKBACK · NEXT}}
+    R --> C{{check turn<br/>FIX · DROP · OK}}
+    C --> J[(journal)]
+    J --> M[minutes assembled from checked notes<br/>決議 · 待辦 · 保留]
+    J --> O{{overview, 3–5 cited sentences}}
+    O --> M
 ```
 
-### One reading turn
+### One growing conversation per session
 
-Each turn sees three things:
+On a phone CPU, prefill dominates the cost (≈35–40 tok/s against 7–9 tok/s of decode for a 2B). The design therefore never recomputes what it has already read.
 
-- a **bounded view of the journal**: recent entries, entries sharing keywords with the current window, and a count of the rest;
-- the current transcript window (~6k tokens);
-- lines re-read with `LOOKBACK`, if the turn asked for any.
+The candidate models are hybrids: Qwen3.5 has Gated-DeltaNet layers and LFM2.5 has short-convolution layers, so part of their state is recurrent. llama.cpp can reuse the cache for them only when the new prompt **extends** the previous one. A prompt that diverges after a shared prefix is recomputed from the divergence.
 
-The model answers with actions, one per line:
+For this reason a session is a single conversation that only grows:
 
-| action | effect |
-|---|---|
-| `NOTE [ts] (TYPE) text` | add a journal entry (`DECISION`, `ACTION`, `NUMBER`, `OPEN-ISSUE`, `-`) |
-| `REVISE #id [ts] text` | rewrite an entry that this window changes, e.g. held → passed |
-| `LOOKBACK t1-t2` | re-read earlier transcript lines, at most twice per window |
-| `NEXT` | move to the next window |
+```
+[system] [journal so far] ([window k] [actions] [check] [fixes])*
+```
 
-### Closing the meeting
-
-1. The whole journal becomes minutes in four sections:
-   - 決議事項 (decisions)
-   - 待辦與負責人 (actions and owners)
-   - 保留與未決 (held and open items)
-   - 會議概要 (overview)
-
-   Every item carries a timestamp.
-2. **Verification.** Each item is checked against the transcript around its citation, one short, isolated call per item. The item is kept, corrected, or dropped.
+- Each window costs only its own tokens, plus a short check turn.
+- A reading turn stops at `NEXT`. The stop word is kept in the history, so that the history matches exactly what was generated.
+- When the next window would overflow 32k, the conversation restarts from `[system] [whole journal]`, one or two times in a 3.5 h meeting.
+- Models that always think (LFM2.5-2.6B) get an empty `<think></think>` prefilled. The block is kept in the history (`preserve_thinking`), which keeps the cache valid. The agent detects these models by itself.
 
 ```mermaid
 sequenceDiagram
+    participant A as ASR
     participant H as harness
-    participant J as journal
-    participant B as Bonsai 2 27B
+    participant L as llama.cpp (one slot)
     loop every window
-        H->>J: view (recent + keyword-matched entries)
-        H->>B: system + journal view + window (fits 32k)
-        B-->>H: NOTE / REVISE / LOOKBACK / NEXT
-        H->>J: append or rewrite entries
-        opt LOOKBACK (≤ 2 per window)
-            H->>B: same turn + earlier lines
+        A->>H: transcript lines
+        H->>L: + window k  (only new tokens prefilled)
+        L-->>H: NOTE / REVISE / LOOKBACK … NEXT
+        H->>L: + check the notes just written  (window still in context)
+        L-->>H: FIX / DROP / OK
+        opt context near 32k
+            H->>L: restart: system + whole journal
         end
     end
-    H->>B: whole journal → sectioned minutes
-    loop every minutes item
-        H->>B: item + transcript around its citation
-        B-->>H: keep / fix / drop
-    end
+    H->>L: fresh short call: overview from the journal
+    H->>H: minutes = checked notes by type + cited overview
 ```
 
-### Context and thinking management
+### Why the model does not write the minutes
 
-```mermaid
-pie showData title One reading turn, tokens (32k cap)
-    "instructions" : 1500
-    "journal view (≤ 12k, shrinks to fit)" : 12000
-    "transcript window" : 6000
-    "LOOKBACK lines" : 4000
-    "thinking budget" : 768
-    "action output" : 1500
-    "headroom" : 7000
-```
+Earlier distillation work showed that a small model merges items and invents facts at the reduce step: reducing doubled the error rate. Here the minutes are **assembled** from the checked notes, grouped by type (`DECISION` → 決議, `ACTION` → 待辦, `OPEN-ISSUE` → 保留). The model only writes a short overview, and every overview sentence must cite a time that exists in the journal.
 
-- **Stateless turns.** No chat history accumulates; state lives only in the journal.
-- **Hard fit.** For every call, `prompt + thinking budget + output ≤ 32k`. The journal view shrinks until the call fits.
-- **Budgeted thinking.** The server caps reasoning per turn (`--reasoning-budget`) and returns it separately (`--reasoning-format deepseek`). It is never fed back into a later turn.
+The harness also guards against a small model's loops:
+- at most 8 notes or revisions per turn;
+- a note or revision that repeats an existing note is rejected (bigram Jaccard > 0.6);
+- a citation must resolve to a transcript line.
 
-These principles come from DeerFlow's context engineering: state offloaded to a store, isolated sub-agents, and loading on demand. They are implemented as a small loop that can be ported to Kotlin on top of llama.cpp. DeerFlow's own runtime (LangGraph, sandbox) does not run on a phone.
+### Incremental (chunked) prefill — next step
+
+Prefilling a window only when it closes leaves the CPU idle while people talk. The next version prefills each ASR segment as soon as it arrives. The segment is appended as token IDs through `/completion` with `n_predict: 0`, and the user turn stays open until the window closes. When the window closes, only the check and the decode remain.
+
+This changes no output, because the same tokens are computed. It only moves prefill into the wait. On the Reno7, prefill speed barely depends on chunk size:
+
+| chunk (tokens) | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|
+| Qwen3.5-2B Q4_0 prefill (tok/s) | 36.9 | 35.7 | 38.7 | 39.8 | 39.7 |
+
+## Results so far
+
+The protocol was validated with **Qwen3.8-27B** (NVFP4, served by NInfer on one RTX 5090) on 10 held-out IVOD sessions. The judge is Gemma-4-31B: `eval/judge_prose_tx.py` checks each cited statement against the transcript, from 30 s before its citation to 150 s after.
+
+| | Qwen3.8-27B, realtime agent | gold (teacher) |
+|---|---|---|
+| notes contradicted (25 sampled per session) | 10 % | 7 % |
+| notes unsupported | 24 % | 8 % |
+| **minutes contradicted** | **11 %** | 17 % (gold prose) |
+| coverage of the gold's key points | 0.88 | 0.90 |
+| recall of gold decisions | 73 % | — |
+| well-formed action lines | 100 % | — |
+
+Per section of the minutes:
+
+| section | contradicted | unsupported |
+|---|---|---|
+| decisions | 10 % | 22 % |
+| actions | 9 % | 29 % |
+| held / open | 11 % | 30 % |
+| overview | 18 % | 55 % |
+
+Two known weaknesses:
+- The model attributes statements to bodies the excerpt does not name, for example "財政部說明…" when the speaker labels only say S1.
+- The overview synthesizes passages far from its citations.
+
+### Phone budget
+
+A 3.5 h meeting needs about **55k tokens of prefill** in total, restarts included. The previous stateless agent needed about 180k.
+
+The 27B's token volume was replayed at the measured speed of a 2B on the Reno7:
+- with prefill at window close, the agent falls at most 1.2–2.6 min behind the meeting, and the minutes are ready 1.3–3.6 min after it ends;
+- with incremental prefill, the modelled delays are 0.4–1.7 min behind and 0.8–3.0 min after the end.
+
+Reno7 CPU speeds (8 threads, `llama-bench` pp512 / tg32, tok/s):
+
+| model | prefill | decode |
+|---|---|---|
+| LFM2.5-1.2B Q4_0 | 78.1 | 18.2 |
+| Qwen3.5-2B Q4_0 | 40.4 | 8.8 |
+| LFM2.5-2.6B Q4_0 | 35.0 | 8.0 |
+| Gemma-4-E2B Q4_0 (QAT) | 34.6 | 7.0 |
+| MiniCPM5-2B Q4_0 | 33.5 | 9.2 |
+| LFM2.5-8B-A1B Q4_0 (MoE) | 24.5 | 9.0 |
+| Qwen3.5-4B Q4_0 | 15.4 | 4.2 |
+
+Q4_0 beats Q4_K_M (−15 to −23 % prefill) and Q8_0 on this CPU. A 27B, even ternary (Bonsai), is out of reach on this phone: at best 2.6 tok/s of prefill.
+
+## Plan
+
+1. **Bake-off.** Every ~2B candidate runs the same agent on the same sessions and faces the same judge. They are ranked by contradiction rate, under the realtime constraint. This step is running.
+2. **Fine-tuning.** Distill the best 2B on the 27B's agent traces from the training sessions, never from held-out ones. The trace format is the same one the student will run, so no conversion is needed.
+3. **Incremental prefill.** Implement it, then measure it on the phone with the upstream llama.cpp Android build, the ASR running alongside, and a hot, throttled CPU.
 
 ## Run
 
-Use the PrismML llama.cpp fork, which Bonsai 2 needs. `-c 65536 -np 2` gives two slots of 32k each.
-
 ```bash
-llama-server -m Ternary-Bonsai-2-27B-PTQ1_0.gguf -ngl 99 -c 65536 -np 2 --jinja \
-  --reasoning-format deepseek --reasoning-budget 768 --port 8091 --alias bonsai
+# teacher / reference (any OpenAI-compatible server; llama-server reports cache use in `timings`)
+python3 eval/realtime_agent.py --url http://127.0.0.1:8120/v1 --model q38 \
+  --split data/split_rt_bakeoff.json --out runs/student/rt-q38-27b
 
-python3 eval/journal_agent.py --urls http://127.0.0.1:8091/v1 --think 768 \
-  --out runs/ja-bonsai2-think          # --think 0 with --reasoning-budget 0 for thinking off
+# a ~2B candidate on llama.cpp (upstream): -np 4 slots of 32k
+llama-server -m Qwen3.5-2B-Q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --port 8110 --alias rt
+python3 eval/realtime_agent.py --url http://127.0.0.1:8110/v1 --model rt --parallel 4 \
+  --phone-pp 40.4 --phone-tg 8.8 --out runs/student/rt-q35-2b
+
+bash scripts/rt_bakeoff2.sh                 # all candidates, two at a time
+bash scripts/rt_judge_one.sh q38-27b q35-2b  # judge notes + minutes, coverage, per-section report
+python3 eval/rt_report.py                   # one table: faithfulness, coverage, protocol, phone lag
 ```
 
-Each session writes its journal, the minutes, the verified minutes, call counts, the largest prompt, and thinking tokens.
-
-## Evaluation
-
-The metric is **`eval/judge_prose_tx.py`**. Every cited statement is checked against the transcript from 30 s before its citation to 150 s after, and labelled `supported`, `contradicted` or `unsupported`. Headline: the **contradicted rate**.
-
-The judge is Gemma-4-31B. It is independent of the teacher that produced the reference minutes.
-
-```bash
-JUDGE_SCRIPT=judge_prose_tx DIRS="runs/ja-bonsai2-think" bash scripts/v2_judge.sh
-```
-
-Reference points on the 38 held-out sessions, as the share of statements contradicted by the transcript:
-
-| system | contradicted |
-|---|---|
-| teacher minutes (gold) | 11% |
-| best earlier on-device pipeline (2B map → 4B reduce → guard) | 25% |
-| **Bonsai 2 27B journal agent** | *in progress* |
-
-## Why this direction
-
-Earlier work distilled small students (2–4B) for a map-reduce pipeline. Their contradiction rate plateaued at about 2–3× the teacher's under every training method tried: SFT, DPO, RFT, GRPO, verifiers, and more data. The two errors that dominated were paraphrasing misreadings and merging errors at reduce. A 27B model fits the device only because it is ternary, and it removes that capacity ceiling. The agent design keeps each call short, and lets later evidence correct earlier notes.
+Each session record stores the notes, the minutes and a trace of every call. Each trace entry holds its arrival time and the tokens prefilled and decoded, so the phone timing can be recomputed for any measured speed.
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `eval/journal_agent.py` | the reading agent |
+| `eval/realtime_agent.py` | the realtime reading agent |
+| `eval/rt_report.py`, `eval/minutes_report.py` | bake-off table, per-section report, phone timing model |
 | `eval/judge_prose_tx.py`, `scripts/v2_judge.sh` | transcript-grounded judge |
+| `scripts/rt_bakeoff2.sh`, `scripts/rt_judge_one.sh` | bake-off and judging runners |
+| `eval/journal_agent.py` | earlier stateless journal agent (full re-prefill per turn) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
-| `distill/`, `eval/` (others) | earlier distillation and evaluation work |
+| `distill/`, other `eval/` | earlier map-reduce distillation and evaluation work |
+
+Data (transcripts, gold minutes, runs) is not included.
 
 ## Status
 
-This is research, not production. Still to do:
-
-- human evaluation;
-- measurement on the phone (memory, speed, heat);
-- the Kotlin port.
+Research, not production. Still to do: the bake-off results, the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.
