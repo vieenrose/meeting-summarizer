@@ -18,6 +18,7 @@ own counts (prompt tokens actually computed, tokens generated) and the phone's m
 the report gives, per session, the worst lag behind the live meeting and the wait after its end.
 """
 import argparse
+import difflib
 import json
 import os
 import queue
@@ -50,6 +51,53 @@ NEXT —— 本片段處理完畢。
 NOTE [1:02:15] (NUMBER) 某部資訊系統預算 1200 萬元，較去年增 300 萬元，主要用於系統汰換
 NOTE [1:05:40] (OPEN-ISSUE) 一位委員質疑補助遭刪減，部長稱將另案說明
 NEXT"""
+
+# Tuned harness for Gemma-4-E2B (--harness v1): fewer notes, a verbatim quote per note that the
+# harness checks against the transcript, no attribution the excerpt does not state.
+SYSTEM_V1 = """你是會議閱讀助理，會議正在進行，你依序收到逐字稿片段（語音辨識結果，可能有錯字；講者標籤 S1、S2 不可靠）。
+每收到一段，輸出動作，每行一個：
+NOTE [時間] (類型) 內容 「原文」 —— 新增筆記。類型為 DECISION（已作成的決議）、ACTION（待辦、負責者、期限）、NUMBER（數字）、OPEN-ISSUE（保留、爭議、未決）或 -。時間照抄本片段中的一行。句尾「」內照抄該行原文中最關鍵的 6 到 20 個字，一字不改。
+REVISE #編號 [時間] 內容 「原文」 —— 本片段改變了先前某則筆記（例如先前保留、現在通過），改寫該則。
+NEXT —— 本片段處理完畢。
+規則：
+- 每段最多 3 則，只記最重要的：決議、待辦、關鍵數字、爭議與結果。程序、寒暄、重複的論述不要記。
+- 每則不超過 40 字。數字、條號、金額照抄原文。
+- 不要寫出原文沒有明說的機關或人名；不確定是誰說的，就寫「委員」「官員」或「發言者」。
+- 建議不是決議；保留不是通過。
+- 沒有重點就只輸出 NEXT。最後一行必須是 NEXT。
+
+範例輸出：
+NOTE [1:02:15] (NUMBER) 資訊系統預算編列 1200 萬元，較去年增 300 萬元 「編列了一千二百萬元」
+NOTE [1:05:40] (OPEN-ISSUE) 委員質疑補助遭刪減，官員稱將另案說明 「這部分我們會另案說明」
+NEXT"""
+
+SYSTEM_V3 = (SYSTEM_V1.replace("每段最多 3 則", "每段最多 5 則").replace(" 「原文」", "")
+             .replace("句尾「」內照抄該行原文中最關鍵的 6 到 20 個字，一字不改。", "")
+             .replace(" 「編列了一千二百萬元」", "").replace(" 「這部分我們會另案說明」", ""))
+
+SYSTEM_V4 = SYSTEM_V3.replace("時間照抄本片段中的一行。", "時間照抄本片段中的一行。DECISION 與 NUMBER 句尾加「」，內照抄原文中最關鍵的 6 到 20 個字，一字不改。").replace(
+    "資訊系統預算編列 1200 萬元，較去年增 300 萬元", "資訊系統預算編列 1200 萬元，較去年增 300 萬元 「編列了一千二百萬元」")
+
+QUOTE = re.compile(r"^(.*?)\s*[「『]([^」』]+)[」』]\s*$")
+
+
+def norm(t):
+    return re.sub(r"[\s，。、！？：；,.!?:;「」『』（）()\-—…]", "", t)
+
+
+def quote_found(quote, ts, lines):
+    """The quote must appear (>= 80 % of it, contiguous) in the lines within 60 s of the cited time."""
+    i = resolve_citation(ts, lines)
+    if i is None:
+        return False
+    t0 = lines[i].start_s
+    near = norm("".join(l.text for l in lines if abs(l.start_s - t0) <= 60))
+    q = norm(quote)
+    if len(q) < 4:
+        return False
+    m = difflib.SequenceMatcher(None, near, q, autojunk=False).find_longest_match(0, len(near), 0, len(q))
+    return m.size >= 0.8 * len(q)
+
 
 CHECK = """逐條核對你剛寫的筆記與本片段原文（數字、對象、誰主張、建議或決議、通過或保留）：
 {notes}
@@ -88,6 +136,7 @@ class Session:
         self.calls, self.restarts, self.prefill, self.decode, self.max_ctx = 0, 0, 0, 0, 0
         self.phone_pp, self.phone_tg = PHONE_PP, PHONE_TG
         self.nothink = False
+        self.system, self.quote, self.max_actions = SYSTEM, False, MAX_ACTIONS
 
     def chat(self, content, max_tokens=OUTPUT_TOKENS, keep=True, stop_next=False):
         msgs = self.msgs + [{"role": "user", "content": content}]
@@ -130,7 +179,7 @@ class Session:
 
     def restart(self, journal):
         self.restarts += bool(self.msgs)
-        self.msgs = [{"role": "system", "content": SYSTEM},
+        self.msgs = [{"role": "system", "content": self.system},
                      {"role": "user", "content": "## 筆記本（至今）\n" + ("\n".join(map(render, journal)) or "（尚無筆記）")},
                      {"role": "assistant", "content": "NEXT"}]
         self.ctx_used = self.count(json.dumps(self.msgs, ensure_ascii=False))
@@ -148,10 +197,23 @@ def windows_of(lines, count):
     return out + ([cur] if cur else [])
 
 
-def run_session(s, text, check=True):
+def run_session(s, text, check=True, overview_mode="llm", number_section=False):
     lines = [parse_line(l) for l in text.splitlines() if l.strip()]
     journal, trace, clock, worst_lag = [], [], 0.0, 0.0
-    proto = {"lines": 0, "actions": 0, "capped": 0, "duplicates": 0}
+    proto = {"lines": 0, "actions": 0, "capped": 0, "duplicates": 0, "quote_missing": 0, "quote_bad": 0}
+
+    def quoted(n):
+        """(text, quote) when the note passes the quote check (v1 harness), else None."""
+        if not s.quote:
+            return n.group(3), None
+        q = QUOTE.match(n.group(3))
+        if not q:
+            proto["quote_missing"] += 1
+            return (n.group(3), None) if s.quote == "soft" else None
+        if not quote_found(q.group(2), n.group(1), lines):
+            proto["quote_bad"] += 1
+            return None
+        return q.group(1).strip(), q.group(2)
     s.restart(journal)
 
     def cost(pp, tg):
@@ -177,22 +239,25 @@ def run_session(s, text, check=True):
                 m = ACT.match(line)
                 if m and m.group(1) in ("NOTE", "REVISE"):
                     n_act += 1
-                    if n_act > MAX_ACTIONS:         # a small model can loop on one action
+                    if n_act > s.max_actions:         # a small model can loop on one action
                         proto["capped"] += 1
                         continue
                 if not m:
                     continue
                 act, rest = m.group(1), m.group(2).strip()
                 if act == "NOTE" and (n := NOTE.match(rest)) and resolve_citation(n.group(1), lines) is not None:
-                    if any(similar(n.group(3), e["text"]) > 0.6 for e in journal[-30:]):
+                    if (tq := quoted(n)) is None:
+                        continue                    # no verbatim quote, or it is not in the transcript
+                    if any(similar(tq[0], e["text"]) > 0.6 for e in journal[-30:]):
                         proto["duplicates"] += 1
                         continue                    # the same point restated at a later line
-                    journal.append({"id": len(journal) + 1, "window": k, "ts": n.group(1), "tag": n.group(2), "text": n.group(3)})
+                    journal.append({"id": len(journal) + 1, "window": k, "ts": n.group(1), "tag": n.group(2),
+                                    "text": tq[0], **({"quote": tq[1]} if tq[1] else {})})
                 elif act == "REVISE" and (r := re.match(r"#(\d+)\s*(.*)$", rest)):
                     i = int(r.group(1)) - 1
-                    if 0 <= i < len(journal) and (n := NOTE.match(r.group(2))) and not any(
-                            similar(n.group(3), e["text"]) > 0.6 for j, e in enumerate(journal) if j != i):
-                        journal[i].update(ts=n.group(1), tag=n.group(2) or journal[i]["tag"], text=n.group(3), revised=k)
+                    if 0 <= i < len(journal) and (n := NOTE.match(r.group(2))) and (tq := quoted(n)) and not any(
+                            similar(tq[0], e["text"]) > 0.6 for j, e in enumerate(journal) if j != i):
+                        journal[i].update(ts=n.group(1), tag=n.group(2) or journal[i]["tag"], text=tq[0], revised=k)
                 elif act == "LOOKBACK" and n_lb < MAX_LOOKBACKS:
                     want_lb = rest
             if not want_lb:
@@ -221,11 +286,17 @@ def run_session(s, text, check=True):
     kept = [e for e in journal if not e.get("dropped")]
     # A small model merges and invents at the reduce step, so the minutes are assembled from the
     # checked notes by type; the model only writes the overview.
-    sections = {"決議事項": ["DECISION"], "待辦與負責人": ["ACTION"], "保留與未決": ["OPEN-ISSUE"]}
+    sections = {"決議事項": ["DECISION"], "待辦與負責人": ["ACTION"], "保留與未決": ["OPEN-ISSUE"],
+                **({"重要數字": ["NUMBER"]} if number_section else {})}
     out = []
     for title, tags in sections.items():
         items = [e for e in kept if (e["tag"] or "").upper() in tags]
         out += [f"【{title}】"] + ([f"- {e['text'].rstrip('。')} [{e['ts']}]" for e in items] or ["- 無"])
+    if overview_mode == "none":
+        minutes = "\n".join(out)
+        end = lines[-1].start_s + 5
+        return journal, minutes, trace, {"meeting_s": end, "worst_lag_s": round(worst_lag),
+                                         "after_end_s": round(clock - end), "windows": len(wins), "protocol": proto}
     s.msgs = []                                     # a fresh, short context
     digest = "\n".join(f"[{e['ts']}] " + (f"({e['tag']}) " if e["tag"] else "") + e["text"] for e in kept)
     overview, pp, tg = s.chat(OVERVIEW.format(journal=digest), max_tokens=400, keep=False)
@@ -253,6 +324,12 @@ def main():
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--nothink-prefill", action="store_true", help="for models that always think")
+    ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4"],
+                    help="v0: bake-off protocol; v1: tuned for Gemma-4-E2B (3 notes/window, verbatim quote required "
+                         "and checked); v2: 5 notes/window, a quote is checked when given, a note without one is kept; "
+                         "v3: v2 without asking for quotes; v4: v3 with checked quotes on DECISION and NUMBER only")
+    ap.add_argument("--overview", default="llm", choices=["llm", "none"])
+    ap.add_argument("--number-section", action="store_true", help="add NUMBER notes to the minutes")
     ap.add_argument("--phone-pp", type=float, default=PHONE_PP, help="phone prefill tok/s for the timing model")
     ap.add_argument("--phone-tg", type=float, default=PHONE_TG, help="phone decode tok/s for the timing model")
     a = ap.parse_args()
@@ -279,9 +356,18 @@ def main():
         s = Session(a.url, a.model, slot, count)
         s.phone_pp, s.phone_tg = a.phone_pp, a.phone_tg
         s.nothink = a.nothink_prefill
+        if a.harness == "v1":
+            s.system, s.quote, s.max_actions = SYSTEM_V1, True, 4
+        elif a.harness == "v2":
+            s.system, s.quote, s.max_actions = SYSTEM_V1.replace("每段最多 3 則", "每段最多 5 則"), "soft", 6
+        elif a.harness == "v3":
+            s.system, s.quote, s.max_actions = SYSTEM_V3, False, 6
+        elif a.harness == "v4":
+            s.system, s.quote, s.max_actions = SYSTEM_V4, "soft", 6
         text = open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8").read()
-        journal, minutes, trace, timing = run_session(s, text, check=not a.no_check)
-        notes = [{k: e[k] for k in ("id", "window", "ts", "text", "tag")} for e in journal if not e.get("dropped")]
+        journal, minutes, trace, timing = run_session(s, text, check=not a.no_check, overview_mode=a.overview,
+                                                      number_section=a.number_section)
+        notes = [{k: e[k] for k in ("id", "window", "ts", "text", "tag", "quote") if k in e} for e in journal if not e.get("dropped")]
         rec = {"notes": notes, "minutes": minutes, "prose": as_prose(minutes), "trace": trace, "timing": timing,
                "calls": s.calls, "restarts": s.restarts, "prefill_tokens": s.prefill, "decode_tokens": s.decode,
                "max_ctx": s.max_ctx, "dropped": sum(1 for e in journal if e.get("dropped")),

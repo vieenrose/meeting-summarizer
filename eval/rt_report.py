@@ -5,6 +5,7 @@ the phone timing recomputed from each trace's token counts with the model's meas
 import glob
 import json
 import os
+import sys
 
 # Reno7 CPU, 8 threads, Q4_0, llama-bench pp512 / tg32 (tok/s).
 PHONE = {"q35-2b": (40.4, 8.8), "lfm25-2.6b": (35.0, 8.0), "minicpm5-2b": (33.5, 9.2),
@@ -54,21 +55,24 @@ def timing_chunked(trace, end, pp, tg):
 
 
 def main():
+    pattern = sys.argv[1] if len(sys.argv) > 1 else "rt-*"
     print(f"{'run':<16}{'notes/s':>8}{'notes contr':>12}{'unsup':>7}{'min contr':>10}{'unsup':>7}{'cov':>6}"
           f"{'parse':>7}{'lag max':>9}{'after':>7}{'lag chunked':>12}{'after':>7}")
-    for d in sorted(glob.glob("runs/student/rt-*")):
-        tag = os.path.basename(d)[3:]
+    for d in sorted(glob.glob(f"runs/student/{pattern}")):
+        name = os.path.basename(d)
+        tag = name[3:] if name.startswith("rt-") else name
         recs = [json.load(open(f, encoding="utf-8")) for f in glob.glob(f"{d}/ivod_*.json")]
         if not recs:
             continue
         notes = sum(len(r["notes"]) for r in recs) / len(recs)
         p = [r["timing"]["protocol"] for r in recs]
         parse = sum(x["actions"] for x in p) / max(1, sum(x["lines"] for x in p))
-        nt, mt = tx(f"nj25-rt-{tag}"), tx(f"rt-{tag}")
-        cov_p = f"reports/judge_prose_rt-{tag}.json"
+        nt, mt = tx(f"nj25-{name}"), tx(name)
+        cov_p = f"reports/judge_prose_{name}.json"
         cov = json.load(open(cov_p))["coverage"] if os.path.exists(cov_p) else None
         lag = after = lagc = afterc = ""
-        speed = PHONE.get(tag, PHONE["q35-2b"] if tag == "q38-27b" else None)  # 27B: its token volume at 2B speed
+        speed = PHONE.get(tag, PHONE["q35-2b"] if tag == "q38-27b" else
+                          PHONE["gemma4-e2b"] if tag.startswith(("dev-", "gemma4-e2b")) else None)  # 27B: its token volume at 2B speed
         if speed:
             ts = [timing(r["trace"], r["timing"]["meeting_s"], *speed) for r in recs]
             tc = [timing_chunked(r["trace"], r["timing"]["meeting_s"], *speed) for r in recs]

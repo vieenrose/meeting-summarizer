@@ -143,6 +143,42 @@ The candidates run the same agent on the same 10 held-out sessions and face the 
 
 Its weakness is volume: 121 notes per session against 64 for the 27B. The decoding of all those notes is what puts it 15 min behind on the phone.
 
+### Harness tuning for Gemma-4-E2B, with no fine-tuning
+
+The harness was iterated on a **dev set of 8 training sessions** (`data/split_rt_dev.json`, loop `scripts/rt_dev.sh`). Only the chosen configurations were then measured on the 10 held-out sessions.
+
+| dev variant | minutes contradicted | coverage | gold decisions | phone lag |
+|---|---|---|---|---|
+| v0 (bake-off protocol) | 20 % | 0.81 | 53 % | 9.5 min |
+| v1: 3 notes/window, verbatim quote required and checked | 13 % | 0.35 | 44 % | 7.3 min |
+| v2: 5 notes, quote checked only when given | 14 % | 0.71 | 54 % | 11.6 min |
+| v2n: v2 + key-figures section | 14 % | 0.79 | 54 % | 11.6 min |
+| v3: v2 rules without quotes | 17 % | 0.81 | 68 % | 8.9 min |
+| **v3x: v3 + key figures, no overview** | 17 % | **0.92** | **68 %** | 8.9 min |
+| v4x: v3x + quotes on DECISION/NUMBER only | 15 % | 0.83 | 68 % | 9.4 min |
+
+What each change taught:
+- **Speaker labels are the biggest error source.** Notes that name an ASR speaker label ("S3 認為…") were contradicted at 27 %, against 17 % for the others, because the labels are unreliable. The tuned prompt forbids them, along with any body or person the excerpt does not name.
+- **The check turn never corrected anything.** Across the 8 dev sessions it produced 0 FIX and 0 DROP, so it is dropped.
+- **A verbatim quote checked by the harness** lowers contradictions, but a small model then writes too little: coverage and decision recall fall. It is kept only as an option.
+- **A key-figures section** (the `NUMBER` notes) brings most of the coverage gain. The overview, which was the least supported section, is dropped.
+
+Held-out result (10 sessions, same judge as the bake-off). v3x is `--harness v3 --no-check --overview none --number-section`.
+
+| | Gemma-4-E2B, bake-off harness | **Gemma-4-E2B, tuned harness (v3x)** | Qwen3.8-27B |
+|---|---|---|---|
+| minutes contradicted | 21 % | **18 %** | 11 % |
+| minutes unsupported | 9 % | 9 % | 30 % |
+| notes contradicted | 17 % | 19 % | 10 % |
+| coverage | 0.77 | **0.91** | 0.88 † |
+| gold decisions recalled | 57 % | 59 % | 73 % |
+| **max phone lag** | 15.6 min | **3.4 min** (2.4 with incremental prefill) | — |
+| minutes ready after the end | 19.9 min | **2.8 min** | — |
+
+† The 27B minutes had no key-figures section.
+
+With zero fine-tuning, the tuned harness makes Gemma-4-E2B keep pace with the meeting on the phone and cover the meeting as well as the 27B. Faithfulness is still short of the 27B: 18 % of minutes contradicted, against 11 %. The weakest section is the key figures, at 25 % contradicted (wrong amounts and article numbers). This gap is the target of the fine-tuning.
+
 ### Phone budget
 
 A 3.5 h meeting needs about **55k tokens of prefill** in total, restarts included. The previous stateless agent needed about 180k.
@@ -167,14 +203,9 @@ Q4_0 beats Q4_K_M (−15 to −23 % prefill) and Q8_0 on this CPU. A 27B, even t
 
 ## Plan
 
-1. **Harness tuning for Gemma-4-E2B, with no fine-tuning** (in progress):
-   - iterate on a dev set of 8 training sessions, and keep the held-out sessions for the final measure;
-   - reduce the note volume;
-   - make the check turn effective (so far it almost always answers `OK`);
-   - forbid attributions the excerpt does not state;
-   - move to the token-level harness with incremental prefill.
-2. **Fine-tuning.** Distill Gemma-4-E2B on the 27B's agent traces from the training sessions, with a LoRA on the QAT weights, then requantize to Q4_0. The trace format is the one the student runs.
-3. **On the device.** Measure on the Reno7 with the upstream llama.cpp Android build, the ASR running alongside, and a hot, throttled CPU.
+1. **Teacher traces** (running). Qwen3.8-27B (NInfer) runs the tuned protocol on the training sessions, excluding the held-out and dev sessions. Its notes are then checked against the transcript by the judge, and turns with contradicted notes are filtered out.
+2. **Fine-tuning.** LoRA on the Gemma-4-E2B QAT weights over the filtered traces, then requantize to Q4_0. It is evaluated on the same held-out sessions.
+3. **On the device.** Run the token-level harness with incremental prefill on the Reno7, using the upstream llama.cpp Android build, with the ASR running alongside and a hot, throttled CPU.
 
 ## Run
 
@@ -203,6 +234,7 @@ Each session record stores the notes, the minutes and a trace of every call. Eac
 | `eval/rt_report.py`, `eval/minutes_report.py` | bake-off table, per-section report, phone timing model |
 | `eval/judge_prose_tx.py`, `scripts/v2_judge.sh` | transcript-grounded judge |
 | `scripts/rt_bakeoff2.sh`, `scripts/rt_judge_one.sh` | bake-off and judging runners |
+| `scripts/rt_dev.sh` | one harness-tuning iteration on the dev split (or, with `PREFIX=rt SPLIT=…`, on held-out) |
 | `eval/incremental_prefill_test.py` | per-model check of incremental prefill (cache reuse, output agreement) |
 | `eval/journal_agent.py` | earlier stateless journal agent (full re-prefill per turn) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
@@ -212,4 +244,4 @@ Data (transcripts, gold minutes, runs) is not included.
 
 ## Status
 
-Research, not production. Still to do: harness tuning, the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.
+Research, not production. Still to do: the fine-tuning, incremental prefill on the device, human evaluation, and the Kotlin port.
