@@ -30,8 +30,10 @@ def main():
     for f in ("chat_template.jinja", "processor_config.json", "generation_config.json"):
         if os.path.exists(os.path.join(snap, f)):
             shutil.copy(os.path.join(snap, f), hf_dir)
-    bf16 = a.out.replace(".gguf", "-bf16.gguf")
-    subprocess.run([os.path.expanduser("~/.venvs/vllm/bin/python"), f"{LLAMA}/convert_hf_to_gguf.py", hf_dir, "--outtype", "bf16", "--outfile", bf16], check=True)
+    # f16, not bf16: the one tensor quantize keeps unquantized (per_layer_model_proj) must be f16, as
+    # in Google's QAT GGUF -- the phone CPU (ARMv8.2) has no bf16 and runs prefill ~13 % slower.
+    bf16 = a.out.replace(".gguf", "-f16.gguf")
+    subprocess.run([os.path.expanduser("~/.venvs/vllm/bin/python"), f"{LLAMA}/convert_hf_to_gguf.py", hf_dir, "--outtype", "f16", "--outfile", bf16], check=True)
     subprocess.run([f"{LLAMA}/build-cuda/bin/llama-quantize", bf16, a.out, "Q4_0"], check=True)
     os.remove(bf16)
     shutil.rmtree(hf_dir)

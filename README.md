@@ -6,6 +6,11 @@ The input is a zh-TW meeting of 1.5–3.5 h, transcribed by on-device ASR. The o
 
 **Target device:** OPPO Reno7 (Dimensity 900, 8 GB), with CPU-only llama.cpp. Every model call fits a context of ≤ 32k tokens, and the agent must keep pace with the meeting as it happens.
 
+**Where it stands.** On a real Reno7, the agent kept pace with a 2 h 08 meeting replayed at real speed: it was at most 115 s behind (67 s median) and did not drift.
+- The model is Gemma-4-E2B QAT Q4_0, distilled from Qwen3.8-27B.
+- On 38 held-out sessions, its minutes cover 0.91 of the gold's key points and recall 77 % of the gold decisions.
+- 18 % of its minutes statements are contradicted by the transcript, against 11 % for the 27B.
+
 ## Architecture
 
 A **realtime reading agent** runs on the phone with **Gemma-4-E2B (QAT, Q4_0)**, the student chosen by the bake-off below. The agent protocol is designed and validated with **Qwen3.8-27B**, which serves as the quality reference and, later, as the teacher. Every candidate runs the *same* protocol, so the 27B's traces can be used directly for fine-tuning.
@@ -224,6 +229,17 @@ The student learns the teacher's selection: 7 more points of gold decisions reca
 
   The remaining worst case is a dense 4-hour meeting, where speech arrives faster than a 2B model on this CPU can read it. Prefilling the restart context in the background on a second slot is the next fix.
 
+**On-policy DPO is neutral.** The distilled student read the 163 training sessions with the deployment harness, and 18 % of its notes were contradicted. For each of the 1,667 windows with a contradicted note, the 27B rewrote the student's actions: correct notes kept, wrong ones fixed or removed. `distill/correct_onpolicy.py` builds these pairs, and `distill/dpo_agent.py` trains on them with DPO + 0.2 NLL, starting from the SFT adapter with a frozen reference adapter, data-parallel on 2 GPUs, for 209 steps. The DPO margin rose from 0 to about 1.3. On 38 held-out sessions:
+
+| | SFT | SFT + DPO |
+|---|---|---|
+| minutes contradicted | 18 % | 17 % |
+| notes contradicted | 15 % | 16 % |
+| coverage | 0.91 | 0.92 |
+| gold decisions recalled | 77 % | 77 % |
+
+Every difference is within noise. The 8-session dev set had suggested a coverage drop to 0.77, which the 38 sessions do not confirm. Corrections of the student's own errors do not move its faithfulness, which makes GRPO on the same signal unlikely to help either.
+
 **A mechanical number check does not help measurably.** `eval/number_check.py` keeps a note only if every number it states is said within 90 s of its timestamp; it parses Arabic and Chinese numerals, including 萬 and 億. It drops 3–5 % of notes and moves the key figures from 25 % to 22 % contradicted, but leaves the minutes at 19 %.
 
 **Noise floor.** With 10 sessions and 25 sampled notes per session, differences of 1–2 points are noise: removing notes shifted the sampled-notes rate by 2 points on its own. The gains that stand out from the noise are the realtime fix, coverage, and decision recall. Faithfulness has not moved beyond about 18 % with a 2B model so far.
@@ -250,13 +266,44 @@ Reno7 CPU speeds (8 threads, `llama-bench` pp512 / tg32, tok/s):
 
 Q4_0 beats Q4_K_M (−15 to −23 % prefill) and Q8_0 on this CPU. A 27B, even ternary (Bonsai), is out of reach on this phone: at best 2.6 tok/s of prefill.
 
+### On the device: a live run on the Reno7
+
+`eval/phone_live.py` drives llama-server on the phone. It uses the upstream llama.cpp Android build, CPU only, 8 threads. The driver replays a meeting at real speed:
+- Each ASR segment (20 s of speech) is appended as token IDs with `n_predict: 0`, so it is prefilled while people talk.
+- When a window closes, the model only generates.
+- The driver owns the token sequence (the chat template is rendered once around markers), so every request extends the cached one exactly.
+
+**Prefill slows down with context depth on this CPU**, which the flat benchmark numbers hid (`llama-bench -p 128 -d …`):
+
+| context already in cache | 0 | 4k | 8k | 16k |
+|---|---|---|---|---|
+| prefill of a 128-token chunk (tok/s) | 34.9 | 12.2 | 7.9 | 4.6 |
+
+Flash attention does not change this, and a q8_0 KV cache gains 11 %. On the phone the conversation therefore restarts from the compacted journal at **8k** tokens instead of 32k. The restart is prefilled at the start of the next window, while the meeting goes on.
+
+**Live result**: ivod_16784, 2 h 08, 18 windows, replayed at 1×, deployment model and harness.
+
+| | |
+|---|---|
+| lag after a window closes | **67 s median, 115 s max**, no drift over the meeting |
+| notes | 80 |
+| restarts (8k budget) | 16, each 30–50 s of prefill, overlapped with speech |
+| effective speed | prefill 16 tok/s, decode 4.5 tok/s (about half the cold benchmark) |
+| battery temperature | 30 → 37 °C over 2 h 10 |
+
+Not yet measured: ASR running on the same CPU, and the judged quality of the phone-produced notes.
+
+**GGUF detail.** Converting the merged model through bf16 left one tensor (`per_layer_model_proj`) in BF16, while Google's QAT GGUF keeps it in F16. The phone CPU (ARMv8.2) has no bf16, so prefill was 13 % slower (30.4 against 35.1 tok/s). `distill/merge_agent_lora.py` now converts through f16.
+
 ## Plan
 
-1. **Faithfulness.** The 2B remains at about 18 % of minutes contradicted, against 11 % for the 27B. Options:
-   - on-policy correction: the student's own notes, fixed by the teacher, then DPO;
-   - more teacher sessions (AliMeeting);
-   - an evaluation with more sessions, to see gains below 2 points.
-2. **On the device.** Run the token-level harness with incremental prefill on the Reno7, using the upstream llama.cpp Android build, with the ASR running alongside and a hot, throttled CPU.
+1. **Faithfulness.** A 2B student stays at about 18 % of minutes contradicted under every training signal tried: SFT on teacher traces, on-policy DPO, and a mechanical number check. The remaining errors are mostly relational: the right figure attached to the wrong year, scope or body. The next levers are model capacity and review:
+   - a larger student that still keeps pace on the phone, such as Gemma-4-E4B, not yet measured;
+   - targeted human review of decisions and key figures.
+2. **On the device.**
+   - ASR running alongside the agent;
+   - judged quality of the phone-produced notes;
+   - prefill of the restart context in the background on a second slot.
 
 ## Run
 
@@ -294,6 +341,8 @@ Each session record stores the notes, the minutes and a trace of every call. Eac
 | `distill/build_agent_sft.py`, `distill/sft_agent.py`, `distill/merge_agent_lora.py` | agent-trace SFT data, LoRA training, merge → Q4_0 GGUF |
 | `scripts/rt_teacher_traces.sh`, `scripts/sft_agent_night.sh` | teacher traces with judging; train → merge → dev → held-out pipeline |
 | `eval/number_check.py` | mechanical check of the numbers in notes against the transcript |
+| `eval/phone_live.py` | live run on the phone: real-speed replay, incremental prefill as token IDs, measured lag |
+| `distill/correct_onpolicy.py`, `distill/dpo_agent.py`, `scripts/dpo_night.sh` | on-policy teacher corrections, DPO (1 or 2 GPUs) |
 | `eval/incremental_prefill_test.py` | per-model check of incremental prefill (cache reuse, output agreement) |
 | `eval/journal_agent.py` | earlier stateless journal agent (full re-prefill per turn) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
@@ -303,4 +352,4 @@ Data (transcripts, gold minutes, runs) is not included.
 
 ## Status
 
-Research, not production. Still to do: closing the faithfulness gap, incremental prefill on the device, human evaluation, and the Kotlin port.
+Research, not production. Still to do: closing the faithfulness gap, ASR alongside on the device, incremental prefill on the device, human evaluation, and the Kotlin port.
