@@ -1,5 +1,7 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
+**Current model: v5** (2026-09-30). v0.45 integrates v3; §9 lists what changes when moving to v5.
+
 A note for the [VoxSumDroid](https://github.com/vieenrose/VoxSumDroid) maintainer: how to reuse this project's summarizer so that **ASR, diarization and summarization run in parallel while the meeting is recorded**. The minutes are then ready about a minute after the meeting ends, instead of after a separate summarization phase.
 
 The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `eval/phone_live.py`, the reference implementation measured on a Reno7.
@@ -9,8 +11,10 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 | | |
 |---|---|
 | model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B QAT, Q4_0, Apache-2.0 |
-| file | `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `560041008644c58501e28af80da46ecfdae250381442d1784e0d016dd499946c`, HF revision `8cc7dff1d1967a9ab373d9275176ce8e5df189e2` |
-| output | short cited notes, typed `DECISION` / `ACTION` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type |
+| file (v5) | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `c812c04c4c627c15847614873d187d72db793b4165ea32fd00f1cec451aa5344`, HF revision `958a8f29a0143184418196c36a78b4899c0c8996` |
+| system prompt (v5) | `v5/system_prompt.txt` at the same revision |
+| file (v3, previous) | `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf` at the repo root, sha256 `560041008644c58501e28af80da46ecfdae250381442d1784e0d016dd499946c`, revision `8cc7dff1d1967a9ab373d9275176ce8e5df189e2` |
+| output | short cited notes, typed `DECISION` / `ACTION` / `PROPOSAL` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type |
 | quality | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.92, gold decisions recalled 83 %, **18 % of statements contradicted** by the transcript (the 27B teacher: 11 %) |
 | live, Reno7 (Dimensity 900, 8 GB) | a 2 h 08 meeting replayed at 1×: 67 s median lag after each ~4 min window, 115 s max, no drift. This run **did not have ASR running alongside**; see §6. |
 
@@ -88,7 +92,7 @@ The model was fine-tuned on this protocol. Deviations, such as another system pr
 <|turn>user\n## 逐字稿片段 {k+1}\n …
 ```
 
-- `{SYSTEM}` = [`system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/system_prompt.txt), verbatim.
+- `{SYSTEM}` = [`v5/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v5/system_prompt.txt), verbatim. Each model version was trained with its own prompt: never pair the v5 weights with the v3 prompt, or the reverse.
 - `{JOURNAL}` = `## 筆記本（至今）\n` followed by the journal lines, or `（尚無筆記）` at the start.
 - `ChatTemplate` needs a `GEMMA4` entry. Tokenize the template pieces with special-token parsing, and the transcript text without it.
 
@@ -135,7 +139,7 @@ The fresh prefill (30–50 s) runs at the start of a window, while the next line
 The model does not write the minutes: small models merge and invent at a reduce step. Assemble them from the journal:
 
 ```
-【決議事項】 DECISION notes · 【待辦與負責人】 ACTION · 【保留與未決】 OPEN-ISSUE · 【重要數字】 NUMBER
+【決議事項】 DECISION notes · 【待辦與負責人】 ACTION · 【保留與未決】 OPEN-ISSUE · 【討論要點】 PROPOSAL · 【重要數字】 NUMBER
 - {text} [{ts}]        (or "- 無" for an empty section)
 ```
 
@@ -183,6 +187,20 @@ If VoxSumDroid needs a prose paragraph, for the summary card or for sharing, in 
 3. **Reuse VoxSumDroid's `Summarizer` on the journal, not on the transcript.** The input then drops from the whole meeting to about 2.5k tokens, which removes the long-meeting over-context failure. Its guards still apply, but its faithfulness on this input is unmeasured.
 
 If option 2 is wanted as a product feature, the next fine-tune can add it as a distilled turn: teacher prose from the same journals, judged against the transcript with `eval/judge_prose_tx.py` like the notes. Until then, treat prose as a presentation of the minutes, not as a second source of facts.
+
+### 4.8 v5 note types and the proposal guard
+
+v5 makes the types strict:
+
+| type | meaning | minutes section |
+|---|---|---|
+| `DECISION` | a decision announced in the meeting (通過, 決定, 定案, 同意照辦); a proposal is not one | 決議事項 |
+| `ACTION` | an assigned task: someone is to do it, or a deadline is set | 待辦與負責人 |
+| `PROPOSAL` | a suggestion or option still under discussion | 討論要點 |
+| `OPEN-ISSUE` | held, disputed, or to be confirmed | 保留與未決 |
+| `NUMBER` | a key figure | 重要數字 |
+
+Also apply the harness guard at assembly time (`reclassify_proposals` in `eval/realtime_agent.py`): a `DECISION` or `ACTION` whose text matches `建議|提議|可考慮` (or starts with 建議, 提議, 可以, 可考慮, 考慮, 希望, 應該, 應, 或許, 是否, 討論, 研議), and contains none of 通過, 決定, 決議, 同意, 定案, is filed as `PROPOSAL`. The journal compaction (§4.4) treats `PROPOSAL` like the other untyped notes: after decisions, open issues and actions.
 
 ## 5. Kotlin shape
 
@@ -238,3 +256,27 @@ About one statement in five is contradicted by the transcript. The errors are mo
 
 - The model is Apache-2.0, like its Gemma-4 base, and compatible with VoxSumDroid's GPL-3.0. It is downloaded at runtime like the other models: pin it in `ModelManager` with the revision and sha256 from §1.
 - The model was trained on Legislative Yuan (IVOD) transcripts. No data ships with it. The source recordings are under the IVOD terms of use.
+
+## 9. Moving from v3 to v5
+
+| | v3 (VoxSumDroid v0.45) | v5 |
+|---|---|---|
+| weights | root `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf` | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf` (same size and layout) |
+| system prompt | root `system_prompt.txt` | `v5/system_prompt.txt` |
+| note types | `DECISION` `ACTION` `OPEN-ISSUE` `NUMBER` | adds `PROPOSAL`; `DECISION` and `ACTION` strict |
+| minutes | 4 sections | adds 討論要點 (§4.5), plus the proposal guard (§4.8) |
+| training data | 163 IVOD sessions | 163 IVOD + 217 AliMeeting business meetings |
+
+Everything else is unchanged: the template, the line format, the regex, the guards, the 8k restart, the title and prose calls.
+
+Why: on AliMeeting business meetings, v3 filed proposals under 決議事項 ("建議申請兩三套洗碗機") and listed every idea discussed as an action. On 20 AliMeeting meetings not used in training:
+
+| | v3 | v5 |
+|---|---|---|
+| minutes contradicted | 16 % | 16 % |
+| notes contradicted | 17 % | **14 %** |
+| coverage | 0.86 | **0.88** |
+| 決議事項 items really decided | (measuring) | 76 % |
+| 待辦 items really assigned | (measuring) | 66 % |
+
+Results on the 38 IVOD held-out sessions, and v3's section precision, will be added when measured. Keep v3 pinned until those confirm that v5 is no worse on parliament meetings.

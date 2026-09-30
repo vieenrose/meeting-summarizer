@@ -30,6 +30,28 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
 
+## v5 (latest)
+
+On AliMeeting business meetings, v3 filed proposals as decisions and listed every idea discussed as an action. v5 (`--harness v5`):
+- adds a `PROPOSAL` type, filed under a 討論要點 section;
+- makes `DECISION` (announced) and `ACTION` (assigned, or with a deadline) strict;
+- reclassifies a decision or action worded as a proposal;
+- was retrained on 163 IVOD sessions plus 217 AliMeeting meetings.
+
+The weights are in `v5/` of the Hugging Face repo; v3 stays at the root. New measure: `eval/section_precision.py` asks the judge whether each 決議事項 item was really decided and each 待辦 item really assigned.
+
+On 20 AliMeeting meetings not used in training:
+
+| | v3 | v3 weights + v5 prompt | **v5** |
+|---|---|---|---|
+| minutes contradicted | 16 % | 17 % | 16 % |
+| notes contradicted | 17 % | 17 % | **14 %** |
+| coverage | 0.86 | 0.79 | **0.88** |
+| 決議事項 really decided | (measuring) | 79 % | 76 % |
+| 待辦 really assigned | (measuring) | 64 % | 66 % |
+
+The prompt alone fixes the typing but loses coverage; retraining keeps both. The 38-session IVOD results will be added here.
+
 ## How the agent reads
 
 ```mermaid

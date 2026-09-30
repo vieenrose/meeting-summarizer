@@ -78,6 +78,46 @@ SYSTEM_V3 = (SYSTEM_V1.replace("每段最多 3 則", "每段最多 5 則").repla
 SYSTEM_V4 = SYSTEM_V3.replace("時間照抄本片段中的一行。", "時間照抄本片段中的一行。DECISION 與 NUMBER 句尾加「」，內照抄原文中最關鍵的 6 到 20 個字，一字不改。").replace(
     "資訊系統預算編列 1200 萬元，較去年增 300 萬元", "資訊系統預算編列 1200 萬元，較去年增 300 萬元 「編列了一千二百萬元」")
 
+# v5 (2026-10): out of the parliament domain (AliMeeting business meetings) the v3 student filed
+# proposals under decisions and listed every idea discussed as an action. v5 adds a PROPOSAL type
+# (minutes section 討論要點) and makes DECISION and ACTION strict; the harness also reclassifies a
+# DECISION worded as a proposal (reclassify_proposals).
+SYSTEM_V5 = """你是會議閱讀助理，會議正在進行，你依序收到逐字稿片段（語音辨識結果，可能有錯字；講者標籤 S1、S2 不可靠）。
+每收到一段，輸出動作，每行一個：
+NOTE [時間] (類型) 內容 —— 新增筆記。時間照抄本片段中的一行。類型：
+  DECISION：會中明確作成的決定（宣布通過、決定、定案、同意照辦）。只是提出或討論的方案不算。
+  ACTION：已指派的待辦，要寫出負責者或期限；沒有人負責的想法不算。
+  PROPOSAL：提出的建議、方案或討論中的做法，尚未決定。
+  OPEN-ISSUE：保留、爭議、未決或待確認的事項。
+  NUMBER：關鍵數字（金額、數量、比例、日期）。
+  -：其他重要內容。
+REVISE #編號 [時間] 內容 —— 本片段改變了先前某則筆記（例如先前保留、現在通過），改寫該則。
+NEXT —— 本片段處理完畢。
+規則：
+- 每段最多 5 則，只記最重要的。程序、寒暄、重複的論述不要記。
+- 每則不超過 40 字。數字、條號、金額照抄原文。
+- 不要寫出原文沒有明說的機關或人名；不確定是誰說的，就寫「委員」「官員」或「發言者」。
+- 建議不是決議；保留不是通過；討論過不等於要做。
+- 沒有重點就只輸出 NEXT。最後一行必須是 NEXT。
+
+範例輸出：
+NOTE [1:02:15] (NUMBER) 資訊系統預算編列 1200 萬元，較去年增 300 萬元
+NOTE [1:04:10] (PROPOSAL) 發言者建議改用線上報名，減少現場排隊
+NOTE [1:05:40] (DECISION) 主席宣布本案照案通過
+NOTE [1:06:20] (ACTION) 請主辦單位於兩週內提出書面報告
+NEXT"""
+
+PROPOSAL_CUE = re.compile(r"^(建議|提議|可以|可考慮|考慮|希望|應該|應|或許|是否|討論|研議)|建議|提議|可考慮")
+
+
+def reclassify_proposals(note):
+    """A DECISION or ACTION note worded as a proposal ("建議…", "可考慮…") is a PROPOSAL."""
+    tag = (note.get("tag") or "").upper()
+    if tag in ("DECISION", "ACTION") and PROPOSAL_CUE.search(note["text"]) and not re.search(r"通過|決定|決議|同意|定案", note["text"]):
+        note["tag"] = "PROPOSAL"
+        return True
+    return False
+
 QUOTE = re.compile(r"^(.*?)\s*[「『]([^」』]+)[」』]\s*$")
 
 
@@ -353,7 +393,12 @@ def run_session(s, text, check=True, overview_mode="llm", number_section=False):
     kept = [e for e in journal if not e.get("dropped")]
     # A small model merges and invents at the reduce step, so the minutes are assembled from the
     # checked notes by type; the model only writes the overview.
+    if s.system is SYSTEM_V5:
+        for e in kept:
+            if reclassify_proposals(e):
+                proto["reclassified"] = proto.get("reclassified", 0) + 1
     sections = {"決議事項": ["DECISION"], "待辦與負責人": ["ACTION"], "保留與未決": ["OPEN-ISSUE"],
+                **({"討論要點": ["PROPOSAL"]} if s.system is SYSTEM_V5 else {}),
                 **({"重要數字": ["NUMBER"]} if number_section else {})}
     out = []
     for title, tags in sections.items():
@@ -385,17 +430,18 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:8095/v1")
     ap.add_argument("--model", default="q2b")
     ap.add_argument("--split", default="data/split_v2.json")
-    ap.add_argument("--transcripts", default="data/v2/transcripts")
+    ap.add_argument("--transcripts", default="data/v2/transcripts", help="one or more dirs, comma-separated")
     ap.add_argument("--out", required=True)
     ap.add_argument("--parallel", type=int, default=4, help="must not exceed the server's -np")
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--split-key", default="heldout", help="which session list of --split to run")
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--nothink-prefill", action="store_true", help="for models that always think")
-    ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4"],
+    ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4", "v5"],
                     help="v0: bake-off protocol; v1: tuned for Gemma-4-E2B (3 notes/window, verbatim quote required "
                          "and checked); v2: 5 notes/window, a quote is checked when given, a note without one is kept; "
-                         "v3: v2 without asking for quotes; v4: v3 with checked quotes on DECISION and NUMBER only")
+                         "v3: v2 without asking for quotes; v4: v3 with checked quotes on DECISION and NUMBER only; "
+                         "v5: v3 + PROPOSAL type, strict DECISION/ACTION")
     ap.add_argument("--overview", default="llm", choices=["llm", "none"])
     ap.add_argument("--number-section", action="store_true", help="add NUMBER notes to the minutes")
     ap.add_argument("--read-max-tokens", type=int, default=OUTPUT_TOKENS, help="output cap of a reading turn")
@@ -443,7 +489,11 @@ def main():
             s.system, s.quote, s.max_actions = SYSTEM_V3, False, 6
         elif a.harness == "v4":
             s.system, s.quote, s.max_actions = SYSTEM_V4, "soft", 6
-        text = open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8").read()
+        elif a.harness == "v5":
+            s.system, s.quote, s.max_actions = SYSTEM_V5, False, 6
+        path = next((os.path.join(d, sid + ".txt") for d in a.transcripts.split(",")
+                     if os.path.exists(os.path.join(d, sid + ".txt"))), None)
+        text = open(path, encoding="utf-8").read()
         journal, minutes, trace, timing = run_session(s, text, check=not a.no_check, overview_mode=a.overview,
                                                       number_section=a.number_section)
         notes = [{k: e[k] for k in ("id", "window", "ts", "text", "tag", "quote") if k in e} for e in journal if not e.get("dropped")]

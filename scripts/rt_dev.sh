@@ -8,7 +8,9 @@ set -uo pipefail
 cd /home/luigi/meeting-summarizer
 tag=$1; shift
 SPLIT=${SPLIT:-data/split_rt_dev.json}
-PREFIX=${PREFIX:-dev}   # PREFIX=rt SPLIT=data/split_rt_bakeoff.json for the held-out measure
+PREFIX=${PREFIX:-dev}
+TRANSCRIPTS=${TRANSCRIPTS:-data/v2/transcripts}
+GOLD=${GOLD:-runs/v2/w4000}   # PREFIX=rt SPLIT=data/split_rt_bakeoff.json for the held-out measure
 if ! curl -sf localhost:8700/v1/models >/dev/null; then
   ~/.venvs/cu13/bin/python -m vllm.entrypoints.openai.api_server --model bahadirakdemir/gemma-4-31B-it-text-fp8 \
     --served-model-name judge --tensor-parallel-size 2 --max-model-len 24000 --gpu-memory-utilization 0.72 \
@@ -27,22 +29,24 @@ if ! curl -sf localhost:8140/health >/dev/null || [ "$(cat logs/dev_student.mode
   until curl -sf localhost:8140/health >/dev/null; do sleep 3; done
 fi
 out=runs/student/$PREFIX-$tag
-python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 --split $SPLIT \
+python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 --split $SPLIT --transcripts $TRANSCRIPTS \
   --phone-pp 34.6 --phone-tg 7.0 --out $out "$@" 2>&1 | grep -v -i warn | tail -n 8
 python3 - $PREFIX-$tag <<'P'
 import glob, json, os, random, sys
 src = f'runs/student/{sys.argv[1]}'; dst = f'runs/student/nj25-{sys.argv[1]}'
 os.makedirs(dst, exist_ok=True)
-for f in glob.glob(f'{src}/ivod_*.json'):
+for f in glob.glob(f'{src}/*.json'):
     s = os.path.basename(f); r = json.load(open(f)); rng = random.Random(s + '25')
     ns = rng.sample(r['notes'], min(25, len(r['notes'])))
     prose = ''.join(n['text'].rstrip('。') + f" [{n['ts']}]。" for n in ns)
     json.dump({'notes': r['notes'], 'prose': prose}, open(f'{dst}/{s}', 'w'), ensure_ascii=False)
 P
 J="--judge-url http://127.0.0.1:8700/v1 --judge-model judge --split $SPLIT"
+JT="$J --transcripts $TRANSCRIPTS"
 for d in $out runs/student/nj25-$PREFIX-$tag; do
-  python3 eval/judge_prose_tx.py --candidate $d $J --out reports/judge_prose_tx_$(basename $d).json 2>&1 | tail -1
+  python3 eval/judge_prose_tx.py --candidate $d $JT --out reports/judge_prose_tx_$(basename $d).json 2>&1 | tail -1
 done
-python3 eval/judge_prose.py --candidate $out $J --out reports/judge_prose_$PREFIX-$tag.json 2>&1 | tail -1
-python3 eval/minutes_report.py --run $PREFIX-$tag | tail -1
+python3 eval/judge_prose.py --candidate $out $J --gold $GOLD --out reports/judge_prose_$PREFIX-$tag.json 2>&1 | tail -1
+python3 eval/minutes_report.py --run $PREFIX-$tag --gold $GOLD | tail -1
+python3 eval/section_precision.py --candidate $out --split $SPLIT --transcripts $TRANSCRIPTS --judge-url http://127.0.0.1:8700/v1 --out reports/section_precision_$PREFIX-$tag.json 2>&1 | tail -2
 python3 eval/rt_report.py "$PREFIX-$tag"

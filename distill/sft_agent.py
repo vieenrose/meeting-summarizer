@@ -60,6 +60,10 @@ def main():
     ap.add_argument("--val-sessions", type=int, default=8)
     ap.add_argument("--max-steps", type=int, default=-1, help="smoke test")
     a = ap.parse_args()
+    import torch.distributed as dist
+    world, rank = int(os.environ.get("WORLD_SIZE", 1)), int(os.environ.get("RANK", 0))
+    if world > 1:                       # data-parallel under torch.distributed.run: each rank takes
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))   # its share of every batch
     random.seed(0)
     torch.manual_seed(0)
 
@@ -79,7 +83,10 @@ def main():
     model.enable_input_require_grads()
     model = get_peft_model(model, LoraConfig(r=a.rank, lora_alpha=2 * a.rank, lora_dropout=0.05,
                                              target_modules=TARGETS, task_type="CAUSAL_LM"))
-    model.print_trainable_parameters()
+    if world > 1:
+        dist.init_process_group("nccl")   # after PEFT: an initialised group sends PEFT down a TP path
+    if rank == 0:
+        model.print_trainable_parameters()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=a.lr, weight_decay=0.0)
     steps = math.ceil(len(train) / a.accum) * a.epochs if a.max_steps < 0 else a.max_steps
     sched = get_cosine_schedule_with_warmup(opt, min(20, steps // 10), steps)
@@ -88,13 +95,19 @@ def main():
         model.eval()
         tot = n = 0
         with torch.no_grad():
-            for ids, labels in val:
+            for ids, labels in val[rank::world]:
                 l, k = loss_of(model, ids, labels)
                 tot, n = tot + l.item(), n + k
+        if world > 1:
+            t = torch.tensor([tot, n], device="cuda", dtype=torch.float64)
+            dist.all_reduce(t)
+            tot, n = t[0].item(), t[1].item()
         model.train()
         return tot / max(1, n)
 
-    print(f"step 0 val loss {evaluate():.4f}", flush=True)
+    v0 = evaluate()
+    if rank == 0:
+        print(f"step 0 val loss {v0:.4f}", flush=True)
     step = 0
     model.train()
     for ep in range(a.epochs):
@@ -104,24 +117,36 @@ def main():
             batch = [train[j] for j in order[b:b + a.accum]]
             denom = sum((l != -100).sum().item() - (1 if l[0] != -100 else 0) for _, l in batch)
             run = 0.0
-            for ids, labels in batch:
+            for ids, labels in batch[rank::world]:
                 l, _ = loss_of(model, ids, labels)
                 (l / denom).backward()
                 run += l.item()
+            if world > 1:
+                for p in model.parameters():
+                    if p.grad is not None:
+                        dist.all_reduce(p.grad)
+                t = torch.tensor([run], device="cuda", dtype=torch.float64)
+                dist.all_reduce(t)
+                run = t.item()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             sched.step()
             opt.zero_grad(set_to_none=True)
             step += 1
-            if step % 5 == 0:
+            if rank == 0 and step % 5 == 0:
                 print(f"ep {ep} step {step}/{steps} loss {run / denom:.4f} lr {sched.get_last_lr()[0]:.2e}", flush=True)
             if 0 < a.max_steps <= step:
                 break
-        print(f"epoch {ep} val loss {evaluate():.4f}", flush=True)
-        model.save_pretrained(os.path.join(a.out, f"epoch{ep}"))
+        v = evaluate()
+        if rank == 0:
+            print(f"epoch {ep} val loss {v:.4f}", flush=True)
+            model.save_pretrained(os.path.join(a.out, f"epoch{ep}"))
         if 0 < a.max_steps <= step:
             break
-    tok.save_pretrained(a.out)
+    if rank == 0:
+        tok.save_pretrained(a.out)
+    if world > 1:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

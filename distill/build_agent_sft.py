@@ -20,15 +20,17 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from eval.realtime_agent import SYSTEM_V3, render, windows_of  # noqa: E402
+from eval.realtime_agent import SYSTEM_V3, SYSTEM_V5, render, windows_of  # noqa: E402
 from summarizer.ingest import parse_line  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--teacher", default="runs/teacher/rt-q38-v3x")
-    ap.add_argument("--judged", default="reports/judge_prose_tx_notes-rt-q38-v3x.json")
-    ap.add_argument("--transcripts", default="data/v2/transcripts")
+    ap.add_argument("--judged", default="reports/judge_prose_tx_notes-rt-q38-v3x.json", help="one or more, comma-separated")
+    ap.add_argument("--transcripts", default="data/v2/transcripts,data/alimeeting/transcripts",
+                    help="comma-separated dirs; each session is read from the one that has it")
+    ap.add_argument("--system", default="v3", choices=["v3", "v5"], help="the protocol the teacher ran")
     ap.add_argument("--base", default="google/gemma-4-E2B-it-qat-q4_0-unquantized")
     ap.add_argument("--max-tokens", type=int, default=14000)
     ap.add_argument("--out", default="data/train/agent_sft_rows.jsonl")
@@ -42,18 +44,20 @@ def main():
     def n_tokens(msgs):
         return len(tok.apply_chat_template(msgs, tokenize=True, return_dict=False, enable_thinking=False))
 
+    system = SYSTEM_V5 if a.system == "v5" else SYSTEM_V3
     bad = collections.defaultdict(set)
-    for r in json.load(open(a.judged, encoding="utf-8"))["rows"]:
+    for r in (r for j in a.judged.split(",") for r in json.load(open(j, encoding="utf-8"))["rows"]):
         if r["verdict"] == "contradicted":
             bad[r["id"]].add(r["sentence"])
 
     stats = collections.Counter()
     with open(a.out, "w", encoding="utf-8") as fo:
-        for f in sorted(glob.glob(f"{a.teacher}/ivod_*.json")):
+        for f in sorted(glob.glob(f"{a.teacher}/ivod_*.json") + glob.glob(f"{a.teacher}/alimeeting_*.json")):
             sid = os.path.basename(f)[:-5]
             rec = json.load(open(f, encoding="utf-8"))
-            lines = [parse_line(l) for l in open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8")
-                     .read().splitlines() if l.strip()]
+            path = next(os.path.join(d, sid + ".txt") for d in a.transcripts.split(",")
+                        if os.path.exists(os.path.join(d, sid + ".txt")))
+            lines = [parse_line(l) for l in open(path, encoding="utf-8").read().splitlines() if l.strip()]
             wins = windows_of(lines, wcount)
             replies = {t["window"]: t["reply"] for t in rec["trace"] if "reply" in t and t["window"] != "overview"}
             if len(replies) != len(wins):
@@ -64,7 +68,7 @@ def main():
 
             def restart(k):
                 journal = [n for n in notes if n["window"] < k]
-                return [{"role": "system", "content": SYSTEM_V3},
+                return [{"role": "system", "content": system},
                         {"role": "user", "content": "## 筆記本（至今）\n" + ("\n".join(map(render, journal)) or "（尚無筆記）")},
                         {"role": "assistant", "content": "NEXT"}], []
 

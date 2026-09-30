@@ -1,7 +1,7 @@
 """Meeting titles from the agent's journal, and a judge's score for them.
 
-The agent writes notes, not a title. At stop, one short call gets the compacted journal (the same
-compaction as a restart) and returns a zh-TW title of at most 20 characters. The judge scores it
+The agent writes notes, not a title. At stop, one short call gets the journal and returns a zh-TW
+title of at most 20 characters -- VoxSumDroid's own call, reproduced exactly. The judge scores it
 1-5 against the gold key points and the opening of the transcript (main topic right and specific,
 nothing invented, length kept). The same journals can be titled by several models, which
 separates the journal's quality from the titler's.
@@ -23,11 +23,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from eval.realtime_agent import render  # noqa: E402
 
+# VoxSumDroid's exact title call (core/reader/ReaderLane.title, v0.45.1): the whole journal, as
+# ReaderProtocol.render writes it, in one user turn with no system turn.
 TITLE = """以下是一場會議的筆記：
 
 {journal}
 
-請為這場會議取一個標題：不超過 20 字，點出主要議題（例如審查的法案或預算、討論的主題），不要寫日期，不要寫「會議紀錄」等字眼。只輸出標題。"""
+為這場會議寫一個標題，不超過 20 個字。只輸出標題。"""
 
 JUDGE = """以下是一場會議的重點（參考答案）與逐字稿開頭，以及系統為這場會議取的標題。
 
@@ -80,7 +82,8 @@ def main():
 
     def one(sid):
         notes = json.load(open(f"{a.run}/{sid}.json", encoding="utf-8"))["notes"]
-        title = chat(a.titler, TITLE.format(journal=compact(notes)), 60).splitlines()[0].strip("「」\"' ")
+        journal = "\n".join(render(n) for n in notes)
+        title = next((l for l in chat(a.titler, TITLE.format(journal=journal), 48).splitlines() if l.strip()), "").strip("「」\"'*# ")[:40]
         gold = json.load(open(f"{a.gold}/{sid}.json", encoding="utf-8"))
         points = "\n".join(gold.get("summary", [])[:8])
         opening = "\n".join(open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8").read().splitlines()[:40])[:2500]
