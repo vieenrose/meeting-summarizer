@@ -138,8 +138,10 @@ class Session:
         self.nothink = False
         self.system, self.quote, self.max_actions = SYSTEM, False, MAX_ACTIONS
         self.restart_budget, self.read_max_tokens = 0, OUTPUT_TOKENS
+        self.consensus, self.consensus_temp, self.consensus_sim = 1, 0.6, 0.3
+        self.ctx = CTX
 
-    def chat(self, content, max_tokens=OUTPUT_TOKENS, keep=True, stop_next=False):
+    def chat(self, content, max_tokens=OUTPUT_TOKENS, keep=True, stop_next=False, temperature=None):
         msgs = self.msgs + [{"role": "user", "content": content}]
         # A model that always thinks (LFM2.5-2.6B) gets its answer started after an empty think
         # block; the block stays in the history (preserve_thinking) so the next prompt still
@@ -148,7 +150,8 @@ class Session:
         kwargs = {"enable_thinking": False, **({"preserve_thinking": True} if self.nothink else {})}
         for attempt in range(3):
             r = requests.post(self.url + "/chat/completions", timeout=1800, json={
-                "model": self.model, "messages": msgs + prefix, "temperature": 0.2 + 0.3 * attempt,
+                "model": self.model, "messages": msgs + prefix,
+                "temperature": (temperature if temperature is not None else 0.2) + 0.3 * attempt,
                 "max_tokens": max_tokens, "id_slot": self.slot, "cache_prompt": True,
                 # Stop a reading turn at NEXT: small models ramble on to max_tokens otherwise.
                 **({"stop": ["\nNEXT"]} if stop_next else {}),
@@ -203,6 +206,39 @@ class Session:
         self.ctx_used = self.count(json.dumps(self.msgs, ensure_ascii=False))
 
 
+def _secs(t):
+    p = [int(x) for x in t.split(":")]
+    return p[0] * 3600 + p[1] * 60 + p[2] if len(p) == 3 else p[0] * 60 + p[1]
+
+
+def consensus_filter(samples, min_sim, proto):
+    """NOTE lines of samples[0] confirmed by every other sample: a note there within 90 s of the
+    same time and with character-bigram Jaccard >= min_sim. Other action lines of samples[0]
+    (REVISE, LOOKBACK, NEXT) are kept as they are."""
+    def notes(text):
+        out = []
+        for line in text.splitlines():
+            m = ACT.match(line)
+            if m and m.group(1) == "NOTE" and (n := NOTE.match(m.group(2).strip())):
+                out.append((line, _secs(n.group(1)), n.group(3)))
+        return out
+    others = [notes(t) for t in samples[1:]]
+    kept = []
+    for line in samples[0].splitlines():
+        m = ACT.match(line)
+        if m and m.group(1) == "NOTE" and (n := NOTE.match(m.group(2).strip())):
+            ts, text = _secs(n.group(1)), n.group(3)
+            if all(any(abs(ts - t2) <= 90 and similar(text, x2) >= min_sim for _, t2, x2 in o) for o in others):
+                kept.append(line)
+            else:
+                proto["unconfirmed"] = proto.get("unconfirmed", 0) + 1
+        elif line.strip():
+            kept.append(line)
+    if not kept or kept[-1].strip() != "NEXT":
+        kept.append("NEXT")
+    return "\n".join(kept)
+
+
 def windows_of(lines, count):
     out, cur, tok = [], [], 0
     for l in lines:
@@ -243,11 +279,24 @@ def run_session(s, text, check=True, overview_mode="llm", number_section=False):
         arrive = win[-1].start_s + 5                # the window's last line has been spoken
         clock = max(clock, arrive)
         need = s.count(block) + OUTPUT_TOKENS * 2 + 600
-        if s.ctx_used + need > CTX:
+        if s.ctx_used + need > s.ctx:
             s.restart(journal)
         user, n_lb, before = f"## 逐字稿片段 {k}\n{block}", 0, len(journal)
         while True:
-            reply, pp, tg = s.chat(user, max_tokens=s.read_max_tokens, stop_next=True)
+            if s.consensus > 1 and not user.startswith("## 重讀"):
+                # Self-consistency: sample the turn twice from the same cached prefix and keep only
+                # the notes of the first that the second also wrote (close time, similar text). A
+                # misread relation rarely repeats word for word; a fact read correctly does.
+                samples, pp, tg = [], 0, 0
+                for _ in range(s.consensus):
+                    r_, p_, t_ = s.chat(user, max_tokens=s.read_max_tokens, stop_next=True, keep=False,
+                                        temperature=s.consensus_temp)
+                    samples.append(r_)
+                    pp, tg = pp + p_, tg + t_
+                reply = consensus_filter(samples, s.consensus_sim, proto)
+                s.msgs = s.msgs + [{"role": "user", "content": user}, {"role": "assistant", "content": reply}]
+            else:
+                reply, pp, tg = s.chat(user, max_tokens=s.read_max_tokens, stop_next=True)
             clock += cost(pp, tg)
             trace.append({"window": k, "arrive": arrive, "pp": pp, "tg": tg, "reply": reply})
             proto["lines"] += sum(1 for x in reply.splitlines() if x.strip())
@@ -350,6 +399,11 @@ def main():
     ap.add_argument("--overview", default="llm", choices=["llm", "none"])
     ap.add_argument("--number-section", action="store_true", help="add NUMBER notes to the minutes")
     ap.add_argument("--read-max-tokens", type=int, default=OUTPUT_TOKENS, help="output cap of a reading turn")
+    ap.add_argument("--ctx", type=int, default=CTX,
+                    help="restart budget; the phone uses 8192 (its prefill slows with context depth)")
+    ap.add_argument("--consensus", type=int, default=1, help="samples per reading turn; >1 keeps agreed notes only")
+    ap.add_argument("--consensus-temp", type=float, default=0.6)
+    ap.add_argument("--consensus-sim", type=float, default=0.3)
     ap.add_argument("--restart-journal-tokens", type=int, default=0,
                     help="compact the journal to this many tokens at a restart (0: whole journal)")
     ap.add_argument("--phone-pp", type=float, default=PHONE_PP, help="phone prefill tok/s for the timing model")
@@ -379,6 +433,8 @@ def main():
         s.phone_pp, s.phone_tg = a.phone_pp, a.phone_tg
         s.nothink = a.nothink_prefill
         s.restart_budget, s.read_max_tokens = a.restart_journal_tokens, a.read_max_tokens
+        s.consensus, s.consensus_temp, s.consensus_sim = a.consensus, a.consensus_temp, a.consensus_sim
+        s.ctx = a.ctx
         if a.harness == "v1":
             s.system, s.quote, s.max_actions = SYSTEM_V1, True, 4
         elif a.harness == "v2":

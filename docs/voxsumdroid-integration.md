@@ -11,7 +11,7 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 | model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B QAT, Q4_0, Apache-2.0 |
 | file | `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `560041008644c58501e28af80da46ecfdae250381442d1784e0d016dd499946c`, HF revision `8cc7dff1d1967a9ab373d9275176ce8e5df189e2` |
 | output | short cited notes, typed `DECISION` / `ACTION` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type |
-| quality | 38 held-out zh-TW meetings: coverage 0.91, gold decisions recalled 77 %, **18 % of statements contradicted** by the transcript (the 27B teacher: 11 %) |
+| quality | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.92, gold decisions recalled 83 %, **18 % of statements contradicted** by the transcript (the 27B teacher: 11 %) |
 | live, Reno7 (Dimensity 900, 8 GB) | a 2 h 08 meeting replayed at 1×: 67 s median lag after each ~4 min window, 115 s max, no drift. This run **did not have ASR running alongside**; see §6. |
 
 ## 2. From two phases to three concurrent lanes
@@ -67,10 +67,10 @@ Context parameters for this model:
 | parameter | value | why |
 |---|---|---|
 | `swa_full` | **`false`** | `llama_context_default_params()` sets it to `true`. That gives Gemma's sliding-window layers full attention, which costs a lot at depth on a phone CPU. The reader only ever appends, so the SWA cache never has to roll back. |
-| `n_ctx` | 12288 | The reader restarts at 8k (§4.4); leave room for the window and the output. |
+| `n_ctx` | 12288 | The reader restarts at 8k (§4.4); leave room for the window and the output. On 38 held-out sessions the 8k budget loses nothing against 32k, and gold decisions recalled rise from 77 % to 83 %. |
 | KV | q8_0 + flash attention, as today | +11 % prefill at 8k depth on the Reno7, and half the KV memory |
 | threads | the existing `pin_to_big_cores` policy | On the Dimensity 900 it merges 2×A78 and 6×A55 (0.83 ≥ `kMergeRatio`) into 8 threads, which was also our measured best: pp 25.6 tok/s at 8 threads against 17.0 at 2. |
-| repack | **measure** `use_extra_bufts=false` | All our numbers are with repack on (llama.cpp default). Q4_0 relies on the ARM repack for its dotprod kernels, so no-repack may cost prefill speed. Measure both, and weigh the RAM against the speed. |
+| repack | **measure** `use_extra_bufts=false` on a `dotprod` device | All our Reno7 numbers are with repack on (llama.cpp default). Q4_0 relies on the ARM repack for its dotprod kernels, so no-repack may cost prefill speed. On an ARMv8.0 CPU without `dotprod` (Raspberry Pi 4) llama.cpp does not repack Q4_0 at all, so the flag changes nothing there. |
 
 `nativeGenerateContinue` must add the stop string (`\nNEXT`) back into the sequence when it stops on it, so the history equals what was generated. The generated tokens themselves are already in the cache, so the next `nativeAppend` continues cleanly.
 
@@ -178,6 +178,7 @@ class LiveReader(private val llm: LlmSession, private val tok: (String, Boolean)
 | speed while live | prefill 16 tok/s, decode 4.5 tok/s effective (half the cold benchmark) | the same, with ASR competing for the big cores |
 | heat | battery 30 → 37 °C over 2 h 10, LLM alone | with all three lanes |
 
+- **4 GB devices.** On a Raspberry Pi 4 (A72, 3.8 GB), the model loads in mmap with about 2–2.8 GB resident, nearly all file-backed, and runs at prefill 5 tok/s and decode 2.2 tok/s. That is fine for the post-hoc path and too slow for live. Loaded without a memory cap next to 1.6 GB of other processes, it froze the Pi until it rebooted. Keep the LLM out of a 4 GB device's live path.
 - **Gate the live mode** on RAM, for example ≥ 8 GB total. Below that, keep the current two-phase pipeline and run the reader after transcription: the protocol is the same, only faster than real time, since nothing waits for speech.
 - **Fallback when the reader lags.** If it falls behind by more than a window, keep feeding and delay turns. Nothing is lost, and the tail is processed right after stop. Log the lag per window, as `phone_live.py` does in `events`.
 - **Parity test.** Run `eval/phone_live.py` and the Kotlin reader on the same transcript at `--speed 20`. The token sequences must match exactly, which is the cheapest guard against a template or format drift.

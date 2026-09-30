@@ -16,8 +16,10 @@ On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eva
 |---|---|---|
 | minutes contradicted by the transcript | 18 % | 11 % |
 | notes contradicted | 15 % | 10 % |
-| coverage of the gold's key points | **0.91** | 0.88 |
-| gold decisions recalled | **77 %** | 73 % |
+| coverage of the gold's key points | **0.92** | 0.88 |
+| gold decisions recalled | **83 %** | 73 % |
+
+The deployed configuration restarts from the compacted journal at 8k tokens, as on the phone. Against a 32k budget it loses nothing: 18 % contradicted in both cases, coverage 0.92 against 0.91, and decisions recalled 83 % against 77 %. The compacted journal puts decisions, open issues and actions back at the head of the context at each restart.
 
 **Live on a Reno7.** A 2 h 08 meeting was replayed at real speed:
 
@@ -68,7 +70,8 @@ flowchart LR
    - Result: gold decisions recalled rose from 72 % to 77 %.
 4. **What did not help.** On 38 sessions, neither of these moved faithfulness beyond noise (about ±2 points):
    - on-policy DPO, where the 27B corrected 1,667 of the student's wrong windows;
-   - a mechanical check of the numbers in notes against the transcript.
+   - a mechanical check of the numbers in notes against the transcript;
+   - self-consistency: two samples per window, keeping only the notes both wrote. Samples rarely agree word for word, so coverage fell from 0.88 to 0.50, and the agreed notes were no more faithful (19 % contradicted in both cases).
 
    The remaining errors are mostly relational: the right figure attached to the wrong year, scope or body.
 
@@ -87,7 +90,7 @@ On a GPU host, for evaluation (the same protocol through the chat API):
 llama-server -m ft-ep0f16-q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt
 python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 \
   --harness v3 --no-check --overview none --number-section \
-  --read-max-tokens 400 --restart-journal-tokens 2500 --out runs/student/<name>
+  --read-max-tokens 400 --restart-journal-tokens 2500 --ctx 8192 --out runs/student/<name>
 PREFIX=h38 SPLIT=data/split_rt_heldout38.json bash scripts/rt_dev.sh <tag> <agent options>   # generate + judge
 ```
 
@@ -121,6 +124,7 @@ Data (transcripts, gold minutes, runs) is not included. The weights are on Huggi
 
 - **Faithfulness:** a larger student that still keeps pace on the phone (Gemma-4-E4B, not yet measured), or human review of decisions and key figures.
 - **On the device:**
+  - repack on or off on a `dotprod` CPU. A Raspberry Pi 4 (A72, 4 GB) cannot tell: it has no `dotprod`, so llama.cpp never repacks Q4_0 there. It does show that the model runs on 4 GB, in mmap under a memory cap, with about 2–2.8 GB resident (nearly all file-backed pages), at prefill 5 tok/s and decode 2.2 tok/s;
   - ASR on the same CPU;
   - judged quality of the notes produced on the phone;
   - prefill of the restart context on a second slot;
