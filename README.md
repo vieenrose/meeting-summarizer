@@ -40,17 +40,24 @@ On AliMeeting business meetings, v3 filed proposals as decisions and listed ever
 
 The weights are in `v5/` of the Hugging Face repo; v3 stays at the root. New measure: `eval/section_precision.py` asks the judge whether each 決議事項 item was really decided and each 待辦 item really assigned.
 
-On 20 AliMeeting meetings not used in training:
+| | v3 | **v5** |
+|---|---|---|
+| **AliMeeting, 20 meetings (not in training)** | | |
+| minutes contradicted | 16 % | 16 % |
+| notes contradicted | 17 % | **14 %** |
+| coverage | 0.86 | **0.88** |
+| 決議事項 items really decided | 58 % (276 items) | **76 %** (117) |
+| 待辦 items really assigned | 40 % (355 items) | **66 %** (138) |
+| **IVOD, 38 held-out sessions** | | |
+| minutes contradicted | 18 % | 18 % |
+| coverage | 0.92 | 0.92 |
+| 決議事項 items really decided | 51 % (904 items) | **61 %** (682) |
+| 待辦 items really assigned | 53 % (1,097 items) | **64 %** (517) |
+| gold decisions recalled (keyword-matched) | 83 % | 78 % |
+| notes per session | 89 | 104 |
+| phone lag, median / p90 / max | 2.8 / 4.9 / 17.6 min | 2.8 / 5.9 / 24.9 min |
 
-| | v3 | v3 weights + v5 prompt | **v5** |
-|---|---|---|---|
-| minutes contradicted | 16 % | 17 % | 16 % |
-| notes contradicted | 17 % | 17 % | **14 %** |
-| coverage | 0.86 | 0.79 | **0.88** |
-| 決議事項 really decided | (measuring) | 79 % | 76 % |
-| 待辦 really assigned | (measuring) | 64 % | 66 % |
-
-The prompt alone fixes the typing but loses coverage; retraining keeps both. The 38-session IVOD results will be added here.
+With only the v5 prompt, the v3 weights reach the same precision on AliMeeting (79 % and 64 %) but lose coverage (0.79). Retraining keeps both. The rise in lag comes from v5 writing more notes on dense parliament sessions.
 
 ## How the agent reads
 

@@ -271,12 +271,25 @@ Everything else is unchanged: the template, the line format, the regex, the guar
 
 Why: on AliMeeting business meetings, v3 filed proposals under 決議事項 ("建議申請兩三套洗碗機") and listed every idea discussed as an action. On 20 AliMeeting meetings not used in training:
 
-| | v3 | v5 |
+| | v3 | **v5** |
 |---|---|---|
+| **AliMeeting, 20 meetings (not in training)** | | |
 | minutes contradicted | 16 % | 16 % |
 | notes contradicted | 17 % | **14 %** |
 | coverage | 0.86 | **0.88** |
-| 決議事項 items really decided | (measuring) | 76 % |
-| 待辦 items really assigned | (measuring) | 66 % |
+| 決議事項 items really decided | 58 % (276 items) | **76 %** (117) |
+| 待辦 items really assigned | 40 % (355 items) | **66 %** (138) |
+| **IVOD, 38 held-out sessions** | | |
+| minutes contradicted | 18 % | 18 % |
+| coverage | 0.92 | 0.92 |
+| 決議事項 items really decided | 51 % (904 items) | **61 %** (682) |
+| 待辦 items really assigned | 53 % (1,097 items) | **64 %** (517) |
+| gold decisions recalled (keyword-matched) | 83 % | 78 % |
+| notes per session | 89 | 104 |
+| phone lag, median / p90 / max | 2.8 / 4.9 / 17.6 min | 2.8 / 5.9 / 24.9 min |
 
-Results on the 38 IVOD held-out sessions, and v3's section precision, will be added when measured. Keep v3 pinned until those confirm that v5 is no worse on parliament meetings.
+- **Both domains:** v5 files far fewer proposals as decisions and ideas as tasks. On parliament meetings, where precision was low too, it rises by about 10 points, and faithfulness and coverage do not change.
+- The fall in keyword-matched decision recall is expected: that metric counts gold notes containing 決定 or 決議, and v3 scored on it partly by filing proposals as decisions.
+- **To watch:** v5 writes more notes on IVOD (104 per session, against 89), which lengthens the worst-case lag on dense 4-hour meetings. The median is unchanged. 19 % of IVOD action items are judged unsupported, which is worth a look in the UI (§7).
+
+**Recommendation: move to v5.**
