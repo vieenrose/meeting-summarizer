@@ -6,7 +6,7 @@ The input is a zh-TW meeting of 1.5–4 h, transcribed by on-device ASR. The out
 
 **Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B (QAT, Q4_0)**, distilled from Qwen3.8-27B, on llama.cpp, CPU only.
 
-**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (Q4_0 GGUF, LoRA adapter, system prompt).
+**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (Q4_0 GGUF, LoRA adapter, system prompt). **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
 
 ## Results
 
