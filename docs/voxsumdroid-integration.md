@@ -28,6 +28,7 @@ flowchart LR
     TURN --> NOTES[journal: typed, cited notes]
     NOTES --> UI2[live notes panel]
     NOTES -->|on stop| MIN[minutes = notes by type]
+    NOTES -->|on stop, one short call| TTL[title ≤ 20 chars]
 ```
 
 Three lanes on one CPU:
@@ -38,7 +39,7 @@ Three lanes on one CPU:
 
 **Only stable utterances are fed.** The model cites `[h:mm:ss]` lines with speaker labels, and a line fed while its speaker is still provisional (`speakerDelaySec`, 15 s by default) would be wrong in the cache forever. Waiting for stability costs about 15 s of lag, which is fine against a 4-minute window.
 
-**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), then release everything. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
+**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), title the meeting with the same model (§4.6), then release everything. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
 
 ## 3. JNI changes: a session that keeps its KV cache
 
@@ -139,6 +140,24 @@ The model does not write the minutes: small models merge and invent at a reduce 
 ```
 
 Every item keeps its `[ts]`, so the existing tap-to-play works on it directly. If a prose summary or a title is wanted, run the existing `Summarizer` or title step on the journal after stop. That is a short call on a few thousand tokens.
+
+### 4.6 Title
+
+The same model can title the meeting, so VoxSumDroid does not need to load a second model or run a separate title pass. At stop, after the last turn, make **one short, fresh call**. It is not a turn of the reading conversation: call `nativeReset`, or use a second handle, and send the compacted journal (§4.4, about 2.5k characters) in a single user turn:
+
+```
+以下是一場會議的筆記：
+
+{compacted journal}
+
+請為這場會議取一個標題：不超過 20 字，點出主要議題（例如審查的法案或預算、討論的主題），不要寫日期，不要寫「會議紀錄」等字眼。只輸出標題。
+```
+
+- Use `maxTokens = 60` and temperature 0.2. Keep the first line, with quotes and brackets stripped.
+- On the Reno7 this is about 1–2 min: a ~2.5k-token prefill at shallow depth plus ~20 tokens of decode. It can run while the minutes are assembled.
+- Fallback: if the call fails or returns more than 20 characters, keep VoxSumDroid's existing title step.
+
+**Status:** the model was *not* fine-tuned for titles; this uses its general ability. `eval/title_eval.py` scores titles 1–5 against the reference key points, comparing this model with Gemma-4-31B as an upper bound on the same journals. The scores will be added here. If they fall short, the next fine-tune adds teacher titles as one more training turn, and the prompt above stays the same.
 
 ## 5. Kotlin shape
 
