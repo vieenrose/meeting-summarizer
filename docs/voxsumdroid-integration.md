@@ -39,7 +39,7 @@ Three lanes on one CPU:
 
 **Only stable utterances are fed.** The model cites `[h:mm:ss]` lines with speaker labels, and a line fed while its speaker is still provisional (`speakerDelaySec`, 15 s by default) would be wrong in the cache forever. Waiting for stability costs about 15 s of lag, which is fine against a 4-minute window.
 
-**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), title the meeting with the same model (§4.6), then release everything. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
+**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), title the meeting with the same model (§4.6), optionally render a prose summary (§4.7), then release everything. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
 
 ## 3. JNI changes: a session that keeps its KV cache
 
@@ -158,6 +158,31 @@ The same model can title the meeting, so VoxSumDroid does not need to load a sec
 - Fallback: if the call fails or returns more than 20 characters, keep VoxSumDroid's existing title step.
 
 **Status:** the model was *not* fine-tuned for titles; this uses its general ability. `eval/title_eval.py` scores titles 1–5 against the reference key points, comparing this model with Gemma-4-31B as an upper bound on the same journals. The scores will be added here. If they fall short, the next fine-tune adds teacher titles as one more training turn, and the prompt above stays the same.
+
+### 4.7 A prose summary
+
+The model was **not** fine-tuned to turn the notes into a prose summary, and this is a design choice:
+- Small models merge items and invent facts at a reduce step: in our earlier map-reduce work, reducing doubled the error rate.
+- In this agent, an LLM-written overview of the journal was the least supported section. With Gemma-4-E2B, on 8 dev meetings under an earlier protocol, its sentences were 17 % contradicted and 38 % unsupported by the transcript. The 27B teacher's were 55 % unsupported.
+- It was therefore dropped: the minutes (§4.5) *are* the summary.
+
+If VoxSumDroid needs a prose paragraph, for the summary card or for sharing, in order of preference:
+
+1. **Render the minutes as prose, deterministically.** Turn each section into sentences from a template, keeping each note's `[ts]`: 「會議決定：…[ts]；…」「待辦：…」「尚待確認：…」「主要數字：…」. Nothing is invented, and every sentence stays tap-to-play. This is the recommended default.
+2. **Write prose from the journal, constrained and checked.** Make one short fresh call, like the title (§4.6), on the compacted journal:
+
+   ```
+   以下是一場會議的筆記：
+
+   {compacted journal}
+
+   用三到五句話寫出會議摘要：會議目的、主要爭點與結果。每句句尾附上它所依據的筆記時間 [時間]，時間必須照抄筆記中的時間；只寫筆記中有的內容。只輸出這幾句。
+   ```
+
+   Then check mechanically, as `realtime_agent.py` did with its overview: drop every sentence without a citation, or whose citations are not times present in the journal. Label the result as a machine summary, and keep the minutes one tap away. This is **unmeasured** for the fine-tuned model; expect it to be less faithful than the notes.
+3. **Reuse VoxSumDroid's `Summarizer` on the journal, not on the transcript.** The input then drops from the whole meeting to about 2.5k tokens, which removes the long-meeting over-context failure. Its guards still apply, but its faithfulness on this input is unmeasured.
+
+If option 2 is wanted as a product feature, the next fine-tune can add it as a distilled turn: teacher prose from the same journals, judged against the transcript with `eval/judge_prose_tx.py` like the notes. Until then, treat prose as a presentation of the minutes, not as a second source of facts.
 
 ## 5. Kotlin shape
 
