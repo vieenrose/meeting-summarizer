@@ -6,6 +6,8 @@ The input is a zh-TW meeting of 1.5–4 h, transcribed by on-device ASR. The out
 
 **Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B (QAT, Q4_0)**, distilled from Qwen3.8-27B, on llama.cpp, CPU only.
 
+**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (Q4_0 GGUF, LoRA adapter, system prompt).
+
 ## Results
 
 On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eval/judge_prose_tx.py`: each cited statement is checked from 30 s before its citation to 150 s after):
@@ -113,7 +115,7 @@ The merge converts through f16, not bf16: the one tensor that stays unquantized 
 | `eval/incremental_prefill_test.py`, `eval/number_check.py` | per-model incremental-prefill check; number check (no gain) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
 
-Data (transcripts, gold minutes, runs, model weights) is not included.
+Data (transcripts, gold minutes, runs) is not included. The weights are on Hugging Face (link above).
 
 ## Next
 
