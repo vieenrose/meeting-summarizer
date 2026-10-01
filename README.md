@@ -4,6 +4,11 @@ Minutes of a long meeting, written **live, on the phone**, while the meeting is 
 
 The input is a zh-TW meeting of 1.5–4 h, transcribed by on-device ASR. The output is structured minutes. Every item cites the transcript line it rests on.
 
+One small model does three jobs:
+1. it **reads the meeting live** and writes typed, cited notes; the minutes are those notes grouped by type;
+2. at stop, it **converts the notes into a prose summary** that keeps their citations;
+3. it **titles the meeting** from the notes.
+
 **Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B (QAT, Q4_0)**, distilled from Qwen3.8-27B, on llama.cpp, CPU only.
 
 **Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (Q4_0 GGUF, LoRA adapter, system prompt). **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
@@ -12,7 +17,7 @@ The input is a zh-TW meeting of 1.5–4 h, transcribed by on-device ASR. The out
 
 On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eval/judge_prose_tx.py`: each cited statement is checked from 30 s before its citation to 150 s after):
 
-| | Gemma-4-E2B, deployed | Qwen3.8-27B (reference, 10 sessions) |
+| | Gemma-4-E2B (v3) | Qwen3.8-27B (reference, 10 sessions) |
 |---|---|---|
 | minutes contradicted by the transcript | 18 % | 11 % |
 | notes contradicted | 15 % | 10 % |
@@ -30,7 +35,40 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
 
-## v5 (latest)
+## v8 (latest): reading, prose and title in one model
+
+v8 is fine-tuned on all three jobs. The two conversion calls use VoxSumDroid's own prompts, byte for byte (`eval/conversion_prompts.py`). They are style conversions: the prose must say nothing the notes do not say.
+
+- **Conversion SFT.** Qwen3.8-27B wrote a summary and a title for 543 training journals (`distill/convert_targets.py`). The judge checked each summary sentence against the notes (`eval/judge_prose_notes.py`). Only summaries with no contradicted sentence and the requested form were kept: 123 summaries and 540 titles (`distill/build_convert_sft.py`). They were added to the v5 reading data.
+- **Multi-task GRPO** (`distill/grpo_multi.py`). 150 steps from that adapter, on 1,200 reading windows, 400 prose calls and 400 title calls. Qwen3.8-27B (NInfer) scores each sample (`distill/rl_rewards.py`):
+  - reading: each note's faithfulness to the transcript, whether its DECISION / ACTION type holds, and recall of the teacher's notes, so writing less does not pay;
+  - prose: each sentence's faithfulness to the notes, and form;
+  - title: a 1–5 score.
+
+  The KL is taken against the starting adapter. One GPU samples and trains, the other serves the judge.
+- **A dead end.** A SFT variant (v7) that relabeled the teacher's note types and told the model to exclude the reading of minutes and rules gained a little precision, but lost coverage (0.92 → 0.88). RL kept the coverage and gained the precision.
+
+| | v5 | **v8** | Qwen3.8-27B |
+|---|---|---|---|
+| **IVOD, 38 held-out sessions** | | | |
+| coverage | 0.92 | **0.94** | |
+| minutes contradicted | 18 % | **17 %** | |
+| 決議事項 items really decided | 61 % | **62 %** | |
+| 待辦 items really assigned | 64 % | **68 %** | |
+| phone lag, worst case (model) | 24.9 min | **17.4 min** | |
+| prose: sentences contradicting the notes | 9 % | **8 %** | 11 % |
+| title (1–5) | 4.18 | 4.05 | 4.45 |
+| **AliMeeting, 20 meetings (not in training)** | | | |
+| coverage | 0.88 | 0.88 | |
+| 決議事項 items really decided | 76 % | **79 %** | |
+| 待辦 items really assigned | 66 % | **68 %** | |
+| prose: sentences contradicting the notes | 19 % | **12 %** | 19 % |
+| title (1–5) | 5.0 | 5.0 | 5.0 |
+
+The prose of the 2B model is more faithful to the notes than its 27B teacher's, because it learned only from the teacher's faithful summaries. Titles are not yet better than v5's: the title reward barely varied within a sample group, so it gave the policy little signal. The weights are in `v8/` of the Hugging Face repo, with the same system prompt as v5.
+
+## v5
+
 
 On AliMeeting business meetings, v3 filed proposals as decisions and listed every idea discussed as an action. v5 (`--harness v5`):
 - adds a `PROPOSAL` type, filed under a 討論要點 section;
@@ -109,16 +147,16 @@ flowchart LR
 On the phone, with the upstream llama.cpp Android build:
 
 ```bash
-llama-server -m ft-ep0f16-q4_0.gguf -t 8 -c 32768 -np 1 --jinja --port 8200
+llama-server -m gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf -t 8 -c 32768 -np 1 --jinja --port 8200
 python3 eval/phone_live.py --url http://127.0.0.1:8200 --session <id> --speed 1 --ctx 8192 --out runs/phone
 ```
 
 On a GPU host, for evaluation (the same protocol through the chat API):
 
 ```bash
-llama-server -m ft-ep0f16-q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt
+llama-server -m gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt
 python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 \
-  --harness v3 --no-check --overview none --number-section \
+  --harness v5 --no-check --overview none --number-section \
   --read-max-tokens 400 --restart-journal-tokens 2500 --ctx 8192 --out runs/student/<name>
 PREFIX=h38 SPLIT=data/split_rt_heldout38.json bash scripts/rt_dev.sh <tag> <agent options>   # generate + judge
 ```
@@ -132,17 +170,30 @@ python3 distill/sft_agent.py --out runs/sft/agent/lora
 python3 distill/merge_agent_lora.py --adapter runs/sft/agent/lora/epoch0 --out ft-ep0f16-q4_0.gguf
 ```
 
+v6–v8 (conversion SFT, then multi-task GRPO; two GPUs):
+
+```bash
+python3 distill/convert_targets.py --journals runs/teacher/... --out runs/convert/teacher-train   # 27B summaries and titles
+python3 distill/build_convert_sft.py --targets runs/convert/teacher-train --judged <judge_prose_notes report> --out data/train/convert_rows.jsonl
+python3 -m torch.distributed.run --nproc_per_node 2 distill/sft_agent.py --rows <reading + conversion rows> --out runs/sft/agent/lora-v6
+python3 distill/rl_prompts.py                       # prompt pool: reading windows, prose and title calls
+bash scripts/v8_grpo.sh                             # GRPO (judge on GPU 1), merge, evaluation of the three tasks
+```
+
 The merge converts through f16, not bf16: the one tensor that stays unquantized (`per_layer_model_proj`) must be F16, as in Google's QAT GGUF. The phone CPU has no bf16, which cost 13 % of prefill speed.
 
 ## Layout
 
 | path | contents |
 |---|---|
-| `eval/realtime_agent.py` | the reading agent (chat API; harness variants v0–v4) |
+| `eval/realtime_agent.py` | the reading agent (chat API; harness variants v0–v7, v5 deployed) |
 | `eval/phone_live.py` | live phone driver: real-speed replay, token-ID incremental prefill, measured lag |
 | `eval/judge_prose_tx.py`, `eval/judge_prose.py`, `eval/minutes_report.py`, `eval/rt_report.py` | transcript-grounded judge, coverage, per-section report, phone timing model |
 | `scripts/rt_dev.sh` | one generate-and-judge iteration (dev or held-out) |
 | `distill/build_agent_sft.py`, `distill/sft_agent.py`, `distill/merge_agent_lora.py` | distillation: data, LoRA training, merge → Q4_0 |
+| `eval/conversion_prompts.py`, `eval/judge_prose_notes.py`, `eval/title_eval.py`, `eval/section_precision.py` | VoxSumDroid's title and prose prompts; prose fidelity to the notes; title score; are decisions decided and actions assigned |
+| `distill/convert_targets.py`, `distill/build_convert_sft.py`, `distill/relabel_types.py` | teacher summaries and titles, filtered; type relabeling (v7, not kept) |
+| `distill/rl_prompts.py`, `distill/rl_rewards.py`, `distill/grpo_multi.py` | multi-task GRPO: prompt pool, judge rewards, trainer |
 | `distill/correct_onpolicy.py`, `distill/dpo_agent.py` | on-policy corrections and DPO (neutral, kept for reference) |
 | `eval/incremental_prefill_test.py`, `eval/number_check.py` | per-model incremental-prefill check; number check (no gain) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
@@ -150,6 +201,9 @@ The merge converts through f16, not bf16: the one tensor that stays unquantized 
 Data (transcripts, gold minutes, runs) is not included. The weights are on Hugging Face (link above).
 
 ## Next
+
+- **Titles on parliament meetings:** a pairwise reward against the teacher's title, which varies more within a group than a 1–5 score.
+- **Quantization loss:** the same merged model in f16 and in Q4_0 on the three tasks (`scripts/quant_check.sh`). If the gap is large, train the LoRA quantization-aware.
 
 - **Faithfulness:** a larger student that still keeps pace on the phone (Gemma-4-E4B, not yet measured), or human review of decisions and key figures.
 - **On the device:**

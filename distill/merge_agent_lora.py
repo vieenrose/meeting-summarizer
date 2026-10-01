@@ -20,6 +20,7 @@ def main():
     ap.add_argument("--adapter", required=True)
     ap.add_argument("--out", required=True, help="output .gguf (Q4_0)")
     ap.add_argument("--base", default=BASE)
+    ap.add_argument("--keep-f16", action="store_true", help="keep the f16 GGUF (to measure the Q4_0 loss)")
     a = ap.parse_args()
     hf_dir = a.out.replace(".gguf", "-hf")
     model = AutoModelForCausalLM.from_pretrained(a.base, dtype=torch.bfloat16)
@@ -35,7 +36,8 @@ def main():
     bf16 = a.out.replace(".gguf", "-f16.gguf")
     subprocess.run([os.path.expanduser("~/.venvs/vllm/bin/python"), f"{LLAMA}/convert_hf_to_gguf.py", hf_dir, "--outtype", "f16", "--outfile", bf16], check=True)
     subprocess.run([f"{LLAMA}/build-cuda/bin/llama-quantize", bf16, a.out, "Q4_0"], check=True)
-    os.remove(bf16)
+    if not a.keep_f16:
+        os.remove(bf16)
     shutil.rmtree(hf_dir)
     print("wrote", a.out, os.path.getsize(a.out))
 

@@ -1,6 +1,8 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current model: v5** (2026-09-30). v0.45 integrates v3; §9 lists what changes when moving to v5.
+**Current model: v8** (2026-10-01). v0.45 integrates v3; §9 lists what changes from v3 to v5, and §10 from v5 to v8.
+
+One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned.
 
 A note for the [VoxSumDroid](https://github.com/vieenrose/VoxSumDroid) maintainer: how to reuse this project's summarizer so that **ASR, diarization and summarization run in parallel while the meeting is recorded**. The minutes are then ready about a minute after the meeting ends, instead of after a separate summarization phase.
 
@@ -11,11 +13,13 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 | | |
 |---|---|
 | model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B QAT, Q4_0, Apache-2.0 |
-| file (v5) | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `c812c04c4c627c15847614873d187d72db793b4165ea32fd00f1cec451aa5344`, HF revision `958a8f29a0143184418196c36a78b4899c0c8996` |
-| system prompt (v5) | `v5/system_prompt.txt` at the same revision |
+| file (v8) | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `7a1d8b6a1add7004744b309f625e8b0d78c804cf5ac7c4642de6816d316ebbcb`, HF revision `05285be248875e2940ba79b7646637f35a46acf8` |
+| system prompt (v8) | `v8/system_prompt.txt` at the same revision; identical to v5's |
+| file (v5, previous) | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf`, sha256 `c812c04c4c627c15847614873d187d72db793b4165ea32fd00f1cec451aa5344`, revision `958a8f29a0143184418196c36a78b4899c0c8996` |
 | file (v3, previous) | `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf` at the repo root, sha256 `560041008644c58501e28af80da46ecfdae250381442d1784e0d016dd499946c`, revision `8cc7dff1d1967a9ab373d9275176ce8e5df189e2` |
-| output | short cited notes, typed `DECISION` / `ACTION` / `PROPOSAL` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type |
-| quality | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.92, gold decisions recalled 83 %, **18 % of statements contradicted** by the transcript (the 27B teacher: 11 %) |
+| output | short cited notes, typed `DECISION` / `ACTION` / `PROPOSAL` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type; at stop, a title (≤ 20 characters) and a cited prose summary written from the notes |
+| quality, notes (v8) | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.94, gold decisions recalled 77 %, **17 % of minutes statements contradicted** by the transcript (the 27B teacher: 11 %) |
+| quality, title and prose (v8) | titles 4.05 / 5 on parliament meetings, 5.0 on business meetings (the 27B teacher: 4.45 / 5.0); prose: 8 % (parliament) and 12 % (business) of sentences contradict the notes they were written from (the 27B teacher: 11 % / 19 %) |
 | live, Reno7 (Dimensity 900, 8 GB) | a 2 h 08 meeting replayed at 1×: 67 s median lag after each ~4 min window, 115 s max, no drift. This run **did not have ASR running alongside**; see §6. |
 
 ## 2. From two phases to three concurrent lanes
@@ -43,7 +47,7 @@ Three lanes on one CPU:
 
 **Only stable utterances are fed.** The model cites `[h:mm:ss]` lines with speaker labels, and a line fed while its speaker is still provisional (`speakerDelaySec`, 15 s by default) would be wrong in the cache forever. Waiting for stability costs about 15 s of lag, which is fine against a 4-minute window.
 
-**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), title the meeting with the same model (§4.6), optionally render a prose summary (§4.7), then release everything. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
+**At stop:** flush the last partial window as one turn, assemble the minutes (§4.5), then make two short fresh calls with the same model on the journal: the title (§4.6) and the prose summary (§4.7). Release everything after that. Keep the existing post-hoc path (`CursorAgent` / `Summarizer`) for imported audio and for devices that cannot run the live mode (§6).
 
 ## 3. JNI changes: a session that keeps its KV cache
 
@@ -92,7 +96,7 @@ The model was fine-tuned on this protocol. Deviations, such as another system pr
 <|turn>user\n## 逐字稿片段 {k+1}\n …
 ```
 
-- `{SYSTEM}` = [`v5/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v5/system_prompt.txt), verbatim. Each model version was trained with its own prompt: never pair the v5 weights with the v3 prompt, or the reverse.
+- `{SYSTEM}` = [`v8/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v8/system_prompt.txt), verbatim (the same text as `v5/system_prompt.txt`). Each model version was trained with its own prompt: never pair the v5 or v8 weights with the v3 prompt, or the reverse.
 - `{JOURNAL}` = `## 筆記本（至今）\n` followed by the journal lines, or `（尚無筆記）` at the start.
 - `ChatTemplate` needs a `GEMMA4` entry. Tokenize the template pieces with special-token parsing, and the transcript text without it.
 
@@ -143,50 +147,68 @@ The model does not write the minutes: small models merge and invent at a reduce 
 - {text} [{ts}]        (or "- 無" for an empty section)
 ```
 
-Every item keeps its `[ts]`, so the existing tap-to-play works on it directly. If a prose summary or a title is wanted, run the existing `Summarizer` or title step on the journal after stop. That is a short call on a few thousand tokens.
+Every item keeps its `[ts]`, so the existing tap-to-play works on it directly. The title and the prose summary are written from the same journal, by the same model (§4.6, §4.7).
 
 ### 4.6 Title
 
-The same model can title the meeting, so VoxSumDroid does not need to load a second model or run a separate title pass. At stop, after the last turn, make **one short, fresh call**. It is not a turn of the reading conversation: call `nativeReset`, or use a second handle, and send the compacted journal (§4.4, about 2.5k characters) in a single user turn:
+At stop, after the last reading turn, make **one short, fresh call**. It is not a turn of the reading conversation: call `nativeReset`, or use a second handle.
 
-```
-以下是一場會議的筆記：
+- **Input.** The *whole* journal, each note rendered as in the journal (`#{id} [{ts}] ({TYPE}) {text}`, without `({TYPE})` for an untyped note), in a single user turn, with no system turn and thinking off:
 
-{compacted journal}
+  ```
+  以下是一場會議的筆記：
 
-請為這場會議取一個標題：不超過 20 字，點出主要議題（例如審查的法案或預算、討論的主題），不要寫日期，不要寫「會議紀錄」等字眼。只輸出標題。
-```
+  {journal, one note per line}
 
-- Use `maxTokens = 60` and temperature 0.2. Keep the first line, with quotes and brackets stripped.
-- On the Reno7 this is about 1–2 min: a ~2.5k-token prefill at shallow depth plus ~20 tokens of decode. It can run while the minutes are assembled.
-- Fallback: if the call fails or returns more than 20 characters, keep VoxSumDroid's existing title step.
+  為這場會議寫一個標題，不超過 20 個字。只輸出標題。
+  ```
 
-**Status:** the model was *not* fine-tuned for titles; this uses its general ability. `eval/title_eval.py` scores titles 1–5 against the reference key points, comparing this model with Gemma-4-31B as an upper bound on the same journals. The scores will be added here. If they fall short, the next fine-tune adds teacher titles as one more training turn, and the prompt above stays the same.
+  This is VoxSumDroid's own `ReaderLane.title` prompt (v0.45.1), and v8 was trained on exactly that. Keep it **byte for byte**: the training used this text, not a paraphrase. The reference copy is `title_prompt()` in [`eval/conversion_prompts.py`](../eval/conversion_prompts.py).
+- **Generation.** `maxTokens = 48`, temperature 0.2, stop at `<turn|>`.
+- **Cleaning,** as `ReaderLane.title` does (`clean_title()`): keep the first non-blank line, strip `「」"*#` and spaces, and cut at 40 characters.
+- **Fallback.** If the call fails, or the title is empty or over 20 characters, keep VoxSumDroid's existing title step. On 58 held-out meetings, v8 went over 20 characters once (one parliament meeting).
+- **Cost on the Reno7.** About 1–2 min: a prefill of a few thousand tokens at shallow depth, plus ~20 tokens of decode. It can run while the minutes are assembled.
+
+**Quality.** The judge (Gemma-4-31B) scores each title 1–5 against the notes and the reference key points:
+
+| | parliament (IVOD, 38) | business (AliMeeting, 20) |
+|---|---|---|
+| v5 (not trained for titles) | 4.18 | 5.0 |
+| **v8** | 4.05 | 5.0 |
+| Qwen3.8-27B teacher (upper bound) | 4.45 | 5.0 |
+
+Titles were already good without training. On parliament meetings, the gap to the teacher is a title that names the committee or one bill instead of the main issue. Training has not closed it yet; the next version targets it.
 
 ### 4.7 A prose summary
 
-The model was **not** fine-tuned to turn the notes into a prose summary, and this is a design choice:
-- Small models merge items and invent facts at a reduce step: in our earlier map-reduce work, reducing doubled the error rate.
-- In this agent, an LLM-written overview of the journal was the least supported section. With Gemma-4-E2B, on 8 dev meetings under an earlier protocol, its sentences were 17 % contradicted and 38 % unsupported by the transcript. The 27B teacher's were 55 % unsupported.
-- It was therefore dropped: the minutes (§4.5) *are* the summary.
+The minutes (§4.5) remain the reference: every item is a note with its `[ts]`. The prose summary is a **style conversion** of those notes, not a second reading of the meeting. It must say nothing the notes do not say, and it carries the notes' citations so that every sentence stays tap-to-play. From v8 on, the model is fine-tuned for exactly this.
 
-If VoxSumDroid needs a prose paragraph, for the summary card or for sharing, in order of preference:
+- **Input.** The same call shape as the title: a fresh call, the whole journal, no system turn, thinking off. The prompt is VoxSumDroid's `ReaderLane.prose` (v0.45.1), byte for byte (`prose_prompt()` in [`eval/conversion_prompts.py`](../eval/conversion_prompts.py)):
 
-1. **Render the minutes as prose, deterministically.** Turn each section into sentences from a template, keeping each note's `[ts]`: 「會議決定：…[ts]；…」「待辦：…」「尚待確認：…」「主要數字：…」. Nothing is invented, and every sentence stays tap-to-play. This is the recommended default.
-2. **Write prose from the journal, constrained and checked.** Make one short fresh call, like the title (§4.6), on the compacted journal:
+  ```
+  以下是一場會議的筆記：
 
-   ```
-   以下是一場會議的筆記：
+  {journal, one note per line}
 
-   {compacted journal}
+  根據這些筆記，用連貫的段落寫一份會議摘要（不要條列、不要標題），說明討論了什麼、決定了什麼、誰要做什麼、還有什麼沒解決。只寫筆記裡有的內容；提到某件事時在句尾附上筆記的時間，例如 [1:23]。
+  ```
 
-   用三到五句話寫出會議摘要：會議目的、主要爭點與結果。每句句尾附上它所依據的筆記時間 [時間]，時間必須照抄筆記中的時間；只寫筆記中有的內容。只輸出這幾句。
-   ```
+- **Generation.** `maxTokens = 600`, temperature 0.2, stop at `<turn|>`. The output is about 650 characters, 11–14 sentences.
+- **Cleaning,** as `ReaderLane.prose` does (`clean_prose()`): remove every `[ts]` that is not a time present in the journal; drop bullet (`-`, `*`) and header (`#`) lines; join paragraphs with a blank line. v8 rarely needs it: no bullets or headers on 58 held-out meetings, and 9 invalid citations out of ~420 sentences on parliament meetings (v5: 27).
+- **Cost on the Reno7.** The same prefill as the title, plus ~400 tokens of decode: about 2–3 min. Run it after the title, so the title appears first.
+- **UI.** Show each `[ts]` as a tap-to-play link, as in the minutes, and label the paragraph as a machine summary of the notes.
 
-   Then check mechanically, as `realtime_agent.py` did with its overview: drop every sentence without a citation, or whose citations are not times present in the journal. Label the result as a machine summary, and keep the minutes one tap away. This is **unmeasured** for the fine-tuned model; expect it to be less faithful than the notes.
-3. **Reuse VoxSumDroid's `Summarizer` on the journal, not on the transcript.** The input then drops from the whole meeting to about 2.5k tokens, which removes the long-meeting over-context failure. Its guards still apply, but its faithfulness on this input is unmeasured.
+**Quality.** The judge (Gemma-4-31B) checks every sentence against the notes it was written from (`eval/judge_prose_notes.py`). A sentence is *contradicted* if it changes a fact or turns a proposal into a decision, or an open issue into a settled one:
 
-If option 2 is wanted as a product feature, the next fine-tune can add it as a distilled turn: teacher prose from the same journals, judged against the transcript with `eval/judge_prose_tx.py` like the notes. Until then, treat prose as a presentation of the minutes, not as a second source of facts.
+| | parliament (IVOD, 38) | business (AliMeeting, 20) |
+|---|---|---|
+| v5 (not trained for prose) | 9 % contradicted | 19 % |
+| **v8** | **8 %** | **12 %** |
+| Qwen3.8-27B teacher | 11 % | 19 % |
+
+v8 is more faithful to the notes than its 27B teacher, because it was trained only on teacher summaries the judge found faithful, then reinforced on faithfulness. The prose adds no new errors beyond those 8–12 %. It does inherit the notes' own errors against the transcript (§7), which is why the citations matter.
+
+**How it was trained.** Qwen3.8-27B wrote a summary and a title for 543 training journals with the prompts above. Only summaries with no sentence contradicting the notes, and in the requested form, were kept: 123 of the 543 summaries, plus 540 titles. A multi-task GRPO then rewarded faithfulness to the notes and form for the prose, the judge's 1–5 score for the title, and faithful, correctly typed notes with good recall for reading. Reading quality did not regress (§10).
 
 ### 4.8 v5 note types and the proposal guard
 
@@ -293,3 +315,38 @@ Why: on AliMeeting business meetings, v3 filed proposals under 決議事項 ("�
 - **To watch:** v5 writes more notes on IVOD (104 per session, against 89), which lengthens the worst-case lag on dense 4-hour meetings. The median is unchanged. 19 % of IVOD action items are judged unsupported, which is worth a look in the UI (§7).
 
 **Recommendation: move to v5.**
+
+## 10. Moving from v5 to v8
+
+| | v5 | v8 |
+|---|---|---|
+| weights | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf` | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf` (same size and layout) |
+| system prompt | `v5/system_prompt.txt` | `v8/system_prompt.txt`, **identical** |
+| reading protocol | — | unchanged: template, line format, types, guards, 8k restart |
+| title and prose calls | general ability | **fine-tuned**, on `ReaderLane.title` / `ReaderLane.prose` exactly (§4.6, §4.7) |
+| training | SFT | SFT + conversion SFT + multi-task GRPO |
+
+The switch is a file swap: change the path, revision and sha256 in `ModelManager`. Keep the two conversion prompts byte for byte; if `ReaderLane` changes them, tell this project, so the next version is trained on the new text.
+
+Held-out results (judge: Gemma-4-31B):
+
+| | v5 | **v8** |
+|---|---|---|
+| **IVOD, 38 held-out sessions** | | |
+| coverage | 0.92 | **0.94** |
+| minutes contradicted | 18 % | **17 %** |
+| 決議事項 items really decided | 61 % | **62 %** |
+| 待辦 items really assigned | 64 % | **68 %** |
+| gold decisions recalled (keyword-matched) | 78 % | 77 % |
+| notes per session | 104 | 104 |
+| phone lag, worst case (model) | 24.9 min | **17.4 min** |
+| prose: sentences contradicting the notes | 9 % | **8 %** |
+| title (1–5) | 4.18 | 4.05 |
+| **AliMeeting, 20 meetings (not in training)** | | |
+| coverage | 0.88 | 0.88 |
+| 決議事項 items really decided | 76 % | **79 %** |
+| 待辦 items really assigned | 66 % | **68 %** |
+| prose: sentences contradicting the notes | 19 % | **12 %** |
+| title (1–5) | 5.0 | 5.0 |
+
+**Recommendation: move to v8.** It reads at least as well as v5, and its prose is clearly more faithful to the notes, especially on business meetings. Titles are on par: the 0.13 gap on parliament meetings is within the noise of 38 meetings.
