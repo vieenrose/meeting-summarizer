@@ -5,11 +5,15 @@
          ACTION, whether the type holds (decided / assigned). Plus recall of the teacher's notes
          for the window, so writing less is not a way to score higher.
   prose  all sentences of a sample, judged at once against the notes; plus form.
-  title  a 1-5 score against the notes; over 20 characters scores as a 1.
+  title  a 1-5 score against the notes; over 20 characters scores as a 1. With pairwise=True (v9),
+         plus a comparison against the judge's own title for the same notes, in both orders: a
+         1-5 score barely varies within a group (v8: flat title reward), a comparison does.
 The judge is any OpenAI-compatible server (Qwen3.8-27B on NInfer during training).
 """
+import hashlib
 import json
 import re
+import threading
 
 import requests
 
@@ -50,6 +54,29 @@ TITLE_JUDGE = """以下是一場會議的筆記，以及為這場會議取的標
 
 評分 1 到 5：5 = 準確點出主要議題且具體；4 = 正確但略籠統；3 = 只抓到部分議題或過於籠統；2 = 主題偏差；1 = 錯誤或含筆記沒有的內容。
 只輸出 JSON：{{"score": 1-5}}"""
+
+
+TITLE_REF = """以下是一場會議的筆記：
+
+{notes}
+
+為這場會議寫一個標題，不超過 20 個字。只輸出標題。"""
+
+TITLE_PAIR = """以下是一場會議的筆記，以及兩個候選標題。
+
+## 筆記
+{notes}
+
+## 標題 A
+{a}
+
+## 標題 B
+{b}
+
+哪個標題更好？好標題要準確點出這場會議最主要的議題（審查的法案、預算或討論的主題），具體而不籠統，不含筆記沒有的內容，不超過 20 字。
+只輸出 JSON：{{"better": "A" 或 "B" 或 "tie"}}"""
+
+_refs, _lock = {}, threading.Lock()
 
 
 def ask(url, content, max_tokens=800):
@@ -132,5 +159,37 @@ def title_reward(url, sample, row):
     return (s - 3) / 2, {"score": s}
 
 
-def reward(url, task, sample, row):
+def reference_title(url, row):
+    """The judge's own title for the notes, made once per prompt and cached."""
+    notes = "\n".join(map(render, row["notes"]))
+    key = hashlib.md5(notes.encode()).hexdigest()
+    with _lock:
+        if key in _refs:
+            return _refs[key]
+    ref = clean_title(ask(url, TITLE_REF.format(notes=notes), 60))
+    with _lock:
+        _refs[key] = ref
+    return ref
+
+
+def title_pair_reward(url, sample, row):
+    title = clean_title(sample)
+    if not title or len(title) > 20:
+        return -1.5, {"chars": len(title)}
+    absolute, info = title_reward(url, sample, row)
+    ref = reference_title(url, row)
+    if not ref or title == ref:
+        return absolute + 0.5, {**info, "pair": 0.5}
+    notes = "\n".join(map(render, row["notes"]))
+    pair = 0.0
+    for a, b, mine in ((title, ref, "A"), (ref, title, "B")):
+        v = parse_json(ask(url, TITLE_PAIR.format(notes=notes, a=a, b=b), 40), "{") or {}
+        better = str(v.get("better", "tie")).strip()
+        pair += 0.5 if better == mine else (-0.5 if better in ("A", "B") else 0.0)
+    return absolute + pair, {**info, "pair": pair}
+
+
+def reward(url, task, sample, row, pairwise_title=False):
+    if task == "title" and pairwise_title:
+        return title_pair_reward(url, sample, row)
     return {"read": read_reward, "prose": prose_reward, "title": title_reward}[task](url, sample, row)

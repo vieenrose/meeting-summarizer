@@ -40,6 +40,38 @@ def encode(tok, row):
     return torch.tensor(ids), torch.tensor(labels)
 
 
+# Templates that open every generation with an empty think block but strip think blocks from the
+# history (MiniCPM5, Qwen3, Qwen3.5: ChatML; Hunyuan). Train on what the phone driver sends instead:
+# every assistant turn keeps its empty think block, so the conversation is append-only and each loss
+# turn is trained after exactly the prompt it is generated from. Loss on the reply and its end token.
+NOTHINK = {
+    "chatml-nothink": {"bos": None, "system": "<|im_start|>system\n{}<|im_end|>\n",
+                       "user": "<|im_start|>user\n{}<|im_end|>\n",
+                       "open": "<|im_start|>assistant\n<think>\n\n</think>\n\n", "close": "<|im_end|>", "after": "\n"},
+    "hunyuan-nothink": {"bos": "<｜hy_begin▁of▁sentence｜>", "system": "{}<｜hy_place▁holder▁no▁3｜>",
+                        "user": "<｜hy_User｜>{}", "open": "<｜hy_Assistant｜><think>\n\n</think>\n",
+                        "close": "<｜hy_place▁holder▁no▁2｜>", "after": ""},
+}
+
+
+def encode_nothink(tok, row, fmt):
+    f = NOTHINK[fmt]
+    pieces = [(f["bos"] if f["bos"] is not None else (tok.bos_token or ""), False)]
+    for i, m in enumerate(row["messages"]):
+        if m["role"] == "assistant":
+            pieces.append((f["open"], False))
+            pieces.append((m["content"] + f["close"], i in row["loss_turns"]))
+            pieces.append((f["after"], False))
+        else:
+            pieces.append((f[m["role"]].format(m["content"]), False))
+    ids, labels = [], []
+    for text, loss in pieces:
+        t = tok.encode(text, add_special_tokens=False) if text else []
+        ids += t
+        labels += t if loss else [-100] * len(t)
+    return torch.tensor(ids), torch.tensor(labels)
+
+
 def loss_of(model, ids, labels):
     ids, labels = ids.unsqueeze(0).cuda(), labels.cuda()
     positions = (labels[1:] != -100).nonzero().squeeze(-1)   # logit at t predicts token t+1
@@ -58,6 +90,8 @@ def main():
     ap.add_argument("--rank", type=int, default=16)
     ap.add_argument("--accum", type=int, default=8)
     ap.add_argument("--val-sessions", type=int, default=8)
+    ap.add_argument("--targets", default=TARGETS, help="LoRA target regex (Gemma-4 default)")
+    ap.add_argument("--template", choices=["auto", *NOTHINK], default="auto")
     ap.add_argument("--max-steps", type=int, default=-1, help="smoke test")
     a = ap.parse_args()
     import torch.distributed as dist
@@ -70,19 +104,21 @@ def main():
     rows = [json.loads(l) for l in open(a.rows, encoding="utf-8")]
     sessions = sorted({r["session"] for r in rows})
     val_s = set(random.Random(0).sample(sessions, a.val_sessions))
-    tok = AutoTokenizer.from_pretrained(a.base)
-    data = [(r["session"], *encode(tok, r)) for r in rows]
+    tok = AutoTokenizer.from_pretrained(a.base, trust_remote_code=True)
+    enc = (lambda t, r: encode_nothink(t, r, a.template)) if a.template in NOTHINK else encode
+    data = [(r["session"], *enc(tok, r)) for r in rows]
     train = [(i, l) for s, i, l in data if s not in val_s]
     val = [(i, l) for s, i, l in data if s in val_s]
     n_tok = sum((l != -100).sum().item() for _, l in train)
     print(f"train segments {len(train)}, val {len(val)} ({len(val_s)} sessions), "
           f"loss tokens {n_tok}, longest {max(len(i) for i, _ in train)}", flush=True)
 
-    model = AutoModelForCausalLM.from_pretrained(a.base, dtype=torch.bfloat16, attn_implementation="sdpa").cuda()
+    model = AutoModelForCausalLM.from_pretrained(a.base, dtype=torch.bfloat16, attn_implementation="sdpa",
+                                                 trust_remote_code=True).cuda()
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     model = get_peft_model(model, LoraConfig(r=a.rank, lora_alpha=2 * a.rank, lora_dropout=0.05,
-                                             target_modules=TARGETS, task_type="CAUSAL_LM"))
+                                             target_modules=a.targets, task_type="CAUSAL_LM"))
     if world > 1:
         dist.init_process_group("nccl")   # after PEFT: an initialised group sends PEFT down a TP path
     if rank == 0:

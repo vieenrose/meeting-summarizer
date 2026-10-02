@@ -35,7 +35,26 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
 
-## v8 (latest): reading, prose and title in one model
+## v11 (latest): more precise decisions, better titles
+
+v11 is v8 plus a contrastive DPO (`distill/build_contrast_pairs.py`, `distill/dpo_agent.py`). The 2,700 pairs come from the teacher's verified notes, each with one note altered in one of the students' three dominant error types (`eval/contradiction_types.py`): the right fact on the wrong object, the wrong body or role, an inverted result.
+
+| IVOD, 38 held-out sessions | v5 | v8 | **v11** |
+|---|---|---|---|
+| minutes contradicted | 18 % | 17 % | 17 % |
+| coverage | 0.92 | **0.94** | 0.89 |
+| 決議事項 really decided | 61 % | 62 % | **71 %** |
+| 待辦 really assigned | 64 % | **68 %** | 66 % |
+| title (1–5) | 4.18 | 4.05 | **4.21** |
+| prose: sentences contradicting the notes | 9 % | 8 % | 8 % |
+
+v11 lists fewer decisions, and more of them were really decided. In exchange it covers less of the meeting. Faithfulness is unchanged: the synthetic pairs taught the model to file fewer decisions, not to bind facts better. Weights in `v11/` of the Hugging Face repo; v8 stays for the widest coverage.
+
+**Where the remaining errors come from** (`eval/contradiction_types.py`, share of all minutes statements). Binding (the right fact attached to the wrong year, article or body): 4.8 % for v8, 13 % for Qwen3.5-0.8B, ~20 % for the 1B-class models, 2.4 % for the 27B teacher. Attribution and inverted results add 3–8 % each. The rate is flat across window position, note order and note type: it is per-fact comprehension, not a context or restart artifact. Shorter windows, a lexical grounding filter and a mechanical attribution guard did not move it.
+
+**Smaller students** (same data and protocol, LoRA SFT; IVOD 38): Qwen3.5-0.8B 31 % minutes contradicted (30 % after GRPO), coverage 0.83–0.86; Qwen3-0.6B 39 %; LFM2.5-1.2B 47 %; Hunyuan-0.5B 49 %; MiniCPM5-1B 50 %; Gemma-3-1B 52 %; Granite-4.0-350M 59 %. Qwen3.5-0.8B prefills ~3× faster than Gemma-4-E2B on a Raspberry Pi 4 and does not slow down with context depth (linear attention).
+
+## v8: reading, prose and title in one model
 
 v8 is fine-tuned on all three jobs. The two conversion calls use VoxSumDroid's own prompts, byte for byte (`eval/conversion_prompts.py`). They are style conversions: the prose must say nothing the notes do not say.
 

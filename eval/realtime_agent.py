@@ -107,6 +107,15 @@ NOTE [1:05:40] (DECISION) 主席宣布本案照案通過
 NOTE [1:06:20] (ACTION) 請主辦單位於兩週內提出書面報告
 NEXT"""
 
+# v7 (2026-10): on parliament meetings v5 still filed as decisions the reading of the previous
+# minutes, statements of fact and existing plans, and as actions the reading of rules or reports of
+# work already under way (section precision 61 % / 64 %). v7 states those exclusions; its training
+# replies are the v5 teacher's with note types checked by the judge (distill/relabel_types.py).
+SYSTEM_V7 = SYSTEM_V5.replace(
+    "- 建議不是決議；保留不是通過；討論過不等於要做。",
+    "- 建議不是決議；保留不是通過；討論過不等於要做。\n"
+    "- 宣讀上次會議紀錄、朗讀法規條文、說明現況或既有計畫，都不是本次的 DECISION 或 ACTION；需要時記為 -。")
+
 PROPOSAL_CUE = re.compile(r"^(建議|提議|可以|可考慮|考慮|希望|應該|應|或許|是否|討論|研議)|建議|提議|可考慮")
 
 
@@ -180,6 +189,7 @@ class Session:
         self.restart_budget, self.read_max_tokens = 0, OUTPUT_TOKENS
         self.consensus, self.consensus_temp, self.consensus_sim = 1, 0.6, 0.3
         self.ctx = CTX
+        self.logprobs, self.last_lp = False, None   # per-token log-probs of each reply (eval/abstain.py)
 
     def chat(self, content, max_tokens=OUTPUT_TOKENS, keep=True, stop_next=False, temperature=None):
         msgs = self.msgs + [{"role": "user", "content": content}]
@@ -195,6 +205,7 @@ class Session:
                 "max_tokens": max_tokens, "id_slot": self.slot, "cache_prompt": True,
                 # Stop a reading turn at NEXT: small models ramble on to max_tokens otherwise.
                 **({"stop": ["\nNEXT"]} if stop_next else {}),
+                **({"logprobs": True, "top_logprobs": 1} if self.logprobs else {}),
                 "chat_template_kwargs": kwargs}).json()
             if "choices" in r:
                 break
@@ -213,6 +224,9 @@ class Session:
         self.ctx_used = t["prompt_n"] + t.get("cache_n", 0) + t["predicted_n"]
         self.max_ctx = max(self.max_ctx, self.ctx_used)
         raw = r["choices"][0]["message"]["content"] or ""
+        if self.logprobs:
+            self.last_lp = [[c.get("token", ""), round(c.get("logprob", 0.0), 4)]
+                            for c in ((r["choices"][0].get("logprobs") or {}).get("content") or [])]
         if stop_next and r["choices"][0].get("finish_reason") == "stop":
             raw += "\nNEXT"                        # keep the history equal to what was generated
         out = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
@@ -338,7 +352,8 @@ def run_session(s, text, check=True, overview_mode="llm", number_section=False):
             else:
                 reply, pp, tg = s.chat(user, max_tokens=s.read_max_tokens, stop_next=True)
             clock += cost(pp, tg)
-            trace.append({"window": k, "arrive": arrive, "pp": pp, "tg": tg, "reply": reply})
+            trace.append({"window": k, "arrive": arrive, "pp": pp, "tg": tg, "reply": reply,
+                          **({"lp": s.last_lp} if s.logprobs else {})})
             proto["lines"] += sum(1 for x in reply.splitlines() if x.strip())
             proto["actions"] += sum(1 for x in reply.splitlines() if ACT.match(x))
             want_lb, n_act = None, 0
@@ -393,12 +408,12 @@ def run_session(s, text, check=True, overview_mode="llm", number_section=False):
     kept = [e for e in journal if not e.get("dropped")]
     # A small model merges and invents at the reduce step, so the minutes are assembled from the
     # checked notes by type; the model only writes the overview.
-    if s.system is SYSTEM_V5:
+    if s.system in (SYSTEM_V5, SYSTEM_V7):
         for e in kept:
             if reclassify_proposals(e):
                 proto["reclassified"] = proto.get("reclassified", 0) + 1
     sections = {"決議事項": ["DECISION"], "待辦與負責人": ["ACTION"], "保留與未決": ["OPEN-ISSUE"],
-                **({"討論要點": ["PROPOSAL"]} if s.system is SYSTEM_V5 else {}),
+                **({"討論要點": ["PROPOSAL"]} if s.system in (SYSTEM_V5, SYSTEM_V7) else {}),
                 **({"重要數字": ["NUMBER"]} if number_section else {})}
     out = []
     for title, tags in sections.items():
@@ -437,11 +452,13 @@ def main():
     ap.add_argument("--split-key", default="heldout", help="which session list of --split to run")
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--nothink-prefill", action="store_true", help="for models that always think")
-    ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4", "v5"],
+    ap.add_argument("--window-tokens", type=int, default=0, help="override the window size (default WINDOW_TOKENS)")
+    ap.add_argument("--logprobs", action="store_true", help="store each reading reply's token log-probs in the trace")
+    ap.add_argument("--harness", default="v0", choices=["v0", "v1", "v2", "v3", "v4", "v5", "v7"],
                     help="v0: bake-off protocol; v1: tuned for Gemma-4-E2B (3 notes/window, verbatim quote required "
                          "and checked); v2: 5 notes/window, a quote is checked when given, a note without one is kept; "
                          "v3: v2 without asking for quotes; v4: v3 with checked quotes on DECISION and NUMBER only; "
-                         "v5: v3 + PROPOSAL type, strict DECISION/ACTION")
+                         "v5: v3 + PROPOSAL type, strict DECISION/ACTION; v7: v5 + exclusions (minutes read out, rules, status)")
     ap.add_argument("--overview", default="llm", choices=["llm", "none"])
     ap.add_argument("--number-section", action="store_true", help="add NUMBER notes to the minutes")
     ap.add_argument("--read-max-tokens", type=int, default=OUTPUT_TOKENS, help="output cap of a reading turn")
@@ -478,6 +495,9 @@ def main():
         s = Session(a.url, a.model, slot, count)
         s.phone_pp, s.phone_tg = a.phone_pp, a.phone_tg
         s.nothink = a.nothink_prefill
+        s.logprobs = a.logprobs
+        if a.window_tokens:
+            globals()["WINDOW_TOKENS"] = a.window_tokens
         s.restart_budget, s.read_max_tokens = a.restart_journal_tokens, a.read_max_tokens
         s.consensus, s.consensus_temp, s.consensus_sim = a.consensus, a.consensus_temp, a.consensus_sim
         s.ctx = a.ctx
@@ -491,6 +511,8 @@ def main():
             s.system, s.quote, s.max_actions = SYSTEM_V4, "soft", 6
         elif a.harness == "v5":
             s.system, s.quote, s.max_actions = SYSTEM_V5, False, 6
+        elif a.harness == "v7":
+            s.system, s.quote, s.max_actions = SYSTEM_V7, False, 6
         path = next((os.path.join(d, sid + ".txt") for d in a.transcripts.split(",")
                      if os.path.exists(os.path.join(d, sid + ".txt"))), None)
         text = open(path, encoding="utf-8").read()

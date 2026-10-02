@@ -83,6 +83,7 @@ def main():
     ap.add_argument("--lr", type=float, default=5e-6)
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--accum", type=int, default=8)
+    ap.add_argument("--base", default=BASE)
     a = ap.parse_args()
     import torch.distributed as dist
     world = int(os.environ.get("WORLD_SIZE", 1))
@@ -93,11 +94,16 @@ def main():
     from transformers import AutoTokenizer as AT
     wtok = AT.from_pretrained("Qwen/Qwen3.6-35B-A3B-FP8")
     count = lambda t: len(wtok.encode(t, add_special_tokens=False))  # noqa: E731
-    tok = AutoTokenizer.from_pretrained(BASE)
+    tok = AutoTokenizer.from_pretrained(a.base, trust_remote_code=True)
     pairs = [json.loads(l) for l in open(a.pairs, encoding="utf-8")]
     cache, data = {}, []
     for p in pairs:
         sid = p["session"]
+        if "messages" in p:            # pairs that carry their prompt (distill/build_contrast_pairs.py)
+            c, sc = seq(tok, p["messages"], p["chosen"])
+            r, sr = seq(tok, p["messages"], p["rejected"])
+            data.append((c, sc, r, sr))
+            continue
         if sid not in cache:
             rec = json.load(open(f"{a.student}/{sid}.json", encoding="utf-8"))
             lines = [parse_line(l) for l in open(os.path.join(a.transcripts, sid + ".txt"), encoding="utf-8")
@@ -111,7 +117,8 @@ def main():
     if rank == 0:
         print(f"pairs {len(data)}, longest {max(len(c) for c, *_ in data)} tokens, {world} GPU(s)", flush=True)
 
-    model = AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.bfloat16, attn_implementation="sdpa").cuda()
+    model = AutoModelForCausalLM.from_pretrained(a.base, dtype=torch.bfloat16, attn_implementation="sdpa",
+                                                 trust_remote_code=True).cuda()
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     model = PeftModel.from_pretrained(model, a.sft_adapter, adapter_name="policy", is_trainable=True)

@@ -13,7 +13,7 @@ TRANSCRIPTS=${TRANSCRIPTS:-data/v2/transcripts}
 GOLD=${GOLD:-runs/v2/w4000}   # PREFIX=rt SPLIT=data/split_rt_bakeoff.json for the held-out measure
 if ! curl -sf localhost:8700/v1/models >/dev/null; then
   ~/.venvs/cu13/bin/python -m vllm.entrypoints.openai.api_server --model bahadirakdemir/gemma-4-31B-it-text-fp8 \
-    --served-model-name judge --tensor-parallel-size 2 --max-model-len 24000 --gpu-memory-utilization 0.72 \
+    --served-model-name judge --tensor-parallel-size 2 --max-model-len 24000 --gpu-memory-utilization ${JUDGE_UTIL:-0.62} \
     --max-num-seqs 8 --port 8700 > logs/judge_dev.log 2>&1 &
   echo $! > logs/judge_dev.pid
   until curl -sf localhost:8700/v1/models >/dev/null; do sleep 15; done
@@ -24,7 +24,7 @@ if ! curl -sf localhost:8140/health >/dev/null || [ "$(cat logs/dev_student.mode
   kill $(cat logs/dev_student.pid 2>/dev/null) 2>/dev/null; sleep 5
   echo "$MODEL" > logs/dev_student.model
   CUDA_VISIBLE_DEVICES=1 ~/llama.cpp/build-cuda/bin/llama-server -m $MODEL \
-    -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt > logs/dev_student.log 2>&1 &
+    -ngl 99 -c ${STUDENT_CTX:-65536} -np 4 --jinja --swa-full --port 8140 --alias rt ${SERVER_ARGS:-} > logs/dev_student.log 2>&1 &
   echo $! > logs/dev_student.pid
   until curl -sf localhost:8140/health >/dev/null; do sleep 3; done
 fi

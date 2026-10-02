@@ -1,8 +1,8 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current model: v8** (2026-10-01). v0.45 integrates v3; §9 lists what changes from v3 to v5, and §10 from v5 to v8.
+**Current model: v11** (2026-10-02); v8 stays available for the widest coverage. v0.45 integrates v3; §9 lists what changes from v3 to v5, §10 from v5 to v8, and §11 from v8 to v11.
 
-One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned.
+One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
 A note for the [VoxSumDroid](https://github.com/vieenrose/VoxSumDroid) maintainer: how to reuse this project's summarizer so that **ASR, diarization and summarization run in parallel while the meeting is recorded**. The minutes are then ready about a minute after the meeting ends, instead of after a separate summarization phase.
 
@@ -13,13 +13,14 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 | | |
 |---|---|
 | model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B QAT, Q4_0, Apache-2.0 |
-| file (v8) | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `7a1d8b6a1add7004744b309f625e8b0d78c804cf5ac7c4642de6816d316ebbcb`, HF revision `05285be248875e2940ba79b7646637f35a46acf8` |
-| system prompt (v8) | `v8/system_prompt.txt` at the same revision; identical to v5's |
+| file (v11) | `v11/gemma-4-E2B-meeting-agent-zh-v11-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `16c69abb76e09821bdd08a022091dbb9b84620cc589491f36d294e6ee92f73f0`, HF revision `a862b705f3aaf7edee2018f4e3abae286826f11d` |
+| system prompt (v11) | `v11/system_prompt.txt` at the same revision; identical to v5's and v8's |
+| file (v8) | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf`, sha256 `7a1d8b6a1add7004744b309f625e8b0d78c804cf5ac7c4642de6816d316ebbcb`, revision `05285be248875e2940ba79b7646637f35a46acf8` |
 | file (v5, previous) | `v5/gemma-4-E2B-meeting-agent-zh-v5-Q4_0.gguf`, sha256 `c812c04c4c627c15847614873d187d72db793b4165ea32fd00f1cec451aa5344`, revision `958a8f29a0143184418196c36a78b4899c0c8996` |
 | file (v3, previous) | `gemma-4-E2B-meeting-agent-zh-Q4_0.gguf` at the repo root, sha256 `560041008644c58501e28af80da46ecfdae250381442d1784e0d016dd499946c`, revision `8cc7dff1d1967a9ab373d9275176ce8e5df189e2` |
 | output | short cited notes, typed `DECISION` / `ACTION` / `PROPOSAL` / `OPEN-ISSUE` / `NUMBER`, written window by window; the minutes are those notes grouped by type; at stop, a title (≤ 20 characters) and a cited prose summary written from the notes |
-| quality, notes (v8) | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.94, gold decisions recalled 77 %, **17 % of minutes statements contradicted** by the transcript (the 27B teacher: 11 %) |
-| quality, title and prose (v8) | titles 4.05 / 5 on parliament meetings, 5.0 on business meetings (the 27B teacher: 4.45 / 5.0); prose: 8 % (parliament) and 12 % (business) of sentences contradict the notes they were written from (the 27B teacher: 11 % / 19 %) |
+| quality, notes (v11) | 38 held-out zh-TW meetings, with the 8k restart budget used on the phone: coverage 0.89, gold decisions recalled 72 %, 決議事項 items really decided 71 %, **17 % of minutes statements contradicted** by the transcript (the 27B teacher: 11 %). v8: coverage 0.94, decisions recalled 77 %, 決議事項 62 %, 17 % contradicted |
+| quality, title and prose (v11) | titles 4.21 / 5 on parliament meetings (v8 4.05; the 27B teacher: 4.45); prose: 8 % of sentences contradict the notes they were written from (the 27B teacher: 11 %) |
 | live, Reno7 (Dimensity 900, 8 GB) | a 2 h 08 meeting replayed at 1×: 67 s median lag after each ~4 min window, 115 s max, no drift. This run **did not have ASR running alongside**; see §6. |
 
 ## 2. From two phases to three concurrent lanes
@@ -96,7 +97,7 @@ The model was fine-tuned on this protocol. Deviations, such as another system pr
 <|turn>user\n## 逐字稿片段 {k+1}\n …
 ```
 
-- `{SYSTEM}` = [`v8/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v8/system_prompt.txt), verbatim (the same text as `v5/system_prompt.txt`). Each model version was trained with its own prompt: never pair the v5 or v8 weights with the v3 prompt, or the reverse.
+- `{SYSTEM}` = [`v11/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v11/system_prompt.txt), verbatim (the same text as `v5/` and `v8/system_prompt.txt`). Each model version was trained with its own prompt: never pair the v5 or v8 weights with the v3 prompt, or the reverse.
 - `{JOURNAL}` = `## 筆記本（至今）\n` followed by the journal lines, or `（尚無筆記）` at the start.
 - `ChatTemplate` needs a `GEMMA4` entry. Tokenize the template pieces with special-token parsing, and the transcript text without it.
 
@@ -174,10 +175,11 @@ At stop, after the last reading turn, make **one short, fresh call**. It is not 
 | | parliament (IVOD, 38) | business (AliMeeting, 20) |
 |---|---|---|
 | v5 (not trained for titles) | 4.18 | 5.0 |
-| **v8** | 4.05 | 5.0 |
+| v8 | 4.05 | 5.0 |
+| **v11** | **4.21** | — |
 | Qwen3.8-27B teacher (upper bound) | 4.45 | 5.0 |
 
-Titles were already good without training. On parliament meetings, the gap to the teacher is a title that names the committee or one bill instead of the main issue. Training has not closed it yet; the next version targets it.
+Titles were already good without training. On parliament meetings, the gap to the teacher is a title that names the committee or one bill instead of the main issue. v11 narrows it (4.21).
 
 ### 4.7 A prose summary
 
@@ -203,7 +205,8 @@ The minutes (§4.5) remain the reference: every item is a note with its `[ts]`. 
 | | parliament (IVOD, 38) | business (AliMeeting, 20) |
 |---|---|---|
 | v5 (not trained for prose) | 9 % contradicted | 19 % |
-| **v8** | **8 %** | **12 %** |
+| v8 | **8 %** | **12 %** |
+| **v11** | **8 %** | — |
 | Qwen3.8-27B teacher | 11 % | 19 % |
 
 v8 is more faithful to the notes than its 27B teacher, because it was trained only on teacher summaries the judge found faithful, then reinforced on faithfulness. The prose adds no new errors beyond those 8–12 %. It does inherit the notes' own errors against the transcript (§7), which is why the citations matter.
@@ -350,3 +353,32 @@ Held-out results (judge: Gemma-4-31B):
 | title (1–5) | 5.0 | 5.0 |
 
 **Recommendation: move to v8.** It reads at least as well as v5, and its prose is clearly more faithful to the notes, especially on business meetings. Titles are on par: the 0.13 gap on parliament meetings is within the noise of 38 meetings.
+
+## 11. Moving from v8 to v11
+
+| | v8 | v11 |
+|---|---|---|
+| weights | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf` | `v11/gemma-4-E2B-meeting-agent-zh-v11-Q4_0.gguf` (same size and layout) |
+| system prompt, protocol, title and prose calls | — | **unchanged**: a file swap |
+| training | v5 data + conversion SFT + multi-task GRPO | v8 + a contrastive DPO on 2,700 single-span pairs: one note of a teacher reply altered to the wrong object, the wrong body or an inverted result |
+
+IVOD, 38 held-out sessions (judge: Gemma-4-31B):
+
+| | v5 | v8 | **v11** |
+|---|---|---|---|
+| minutes contradicted | 18 % | 17 % | 17 % |
+| coverage | 0.92 | **0.94** | 0.89 |
+| gold decisions recalled | **78 %** | 77 % | 72 % |
+| 決議事項 items really decided | 61 % (682 items) | 62 % (663) | **71 %** (493) |
+| 待辦 items really assigned | 64 % | **68 %** | 66 % |
+| prose: sentences contradicting the notes | 9 % | 8 % | 8 % |
+| title (1–5) | 4.18 | 4.05 | **4.21** |
+| phone lag, worst case (model) | 24.9 min | 17.4 min | **17.3 min** |
+
+**What changes for the user.**
+- The 決議事項 section is shorter and more reliable. Of the decisions it lists, 71 % were really decided, against 62 % for v8. The proposals it no longer calls decisions move to 討論要點.
+- The title is better.
+- It covers less of the meeting (0.89 against 0.94), and recalls fewer of the decisions a human would list.
+- Faithfulness to the transcript is unchanged: about one statement in six is still contradicted, so §7 holds as is.
+
+**Recommendation.** Ship v11 as the default if the decisions section and the title are what users read first. Keep v8 selectable (same protocol, same prompts) for users who want the widest coverage. Both can be pinned in `ModelManager`; switching is a file swap.
