@@ -9,9 +9,9 @@ One small model does three jobs:
 2. at stop, it **converts the notes into a prose summary** that keeps their citations;
 3. it **titles the meeting** from the notes.
 
-**Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B (QAT, Q4_0)**, distilled from Qwen3.8-27B, on llama.cpp, CPU only.
+**Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B**, distilled from Qwen3.8-27B, on the CPU only. The current build, **mobile-v1**, runs on LiteRT-LM within a 3 GB RAM budget. Earlier versions (v3–v11) are llama.cpp Q4_0 GGUFs.
 
-**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (Q4_0 GGUF, LoRA adapter, system prompt). **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
+**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (`.litertlm` for LiteRT-LM, Q4_0 GGUFs, LoRA adapters, system prompt). **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
 
 ## Results
 
@@ -35,7 +35,24 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
 
-## v11 (latest): more precise decisions, better titles
+## mobile-v1 (latest): LiteRT-LM, on the phone's CPU, within 3 GB
+
+mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), inside Google's own Gemma-4-E2B **mobile** graph: int2 MLP in layers 15–34, int4 elsewhere, an int8 KV cache and int8 static-range activations. It is built in three steps:
+1. **Fine-tune on Google's mobile weights.** A LoRA trained on those weights distils v11: v11's top-32 next-token distributions plus the gold (`distill/kd_teacher_logits.py`, `distill/sft_mobile_qat.py --kd`).
+2. **GPTQ onto Google's grid**, with Google's scales held fixed (`distill/gptq_mobile.py`). Rounding to the nearest integer would erase the fine-tune; GPTQ keeps it (validation loss 0.83 against 1.17).
+3. **Injection** of the integers into Google's `.litertlm`, bit for bit, with fp32 GPU activations and the memory-hungry `prefill_1024` signature disabled (`distill/inject_litertlm.py`).
+
+| Reno7, 4k context | llama.cpp v11 (8k) | **mobile-v1, CPU** |
+|---|---|---|
+| prefill | 8 tok/s at depth | **118 tok/s** |
+| decode | 4–7 tok/s | **~10 tok/s** |
+| peak RSS | — | **2.28 GB** |
+| minutes contradicted (IVOD 38) | 17 % | 17 % |
+| 決議事項 really decided | 71 % | 75 % |
+
+**Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12](docs/voxsumdroid-integration.md#12-litert-lm-the-mobile-model-recommended).
+
+## v11: more precise decisions, better titles
 
 v11 is v8 plus a contrastive DPO (`distill/build_contrast_pairs.py`, `distill/dpo_agent.py`). The 2,700 pairs come from the teacher's verified notes, each with one note altered in one of the students' three dominant error types (`eval/contradiction_types.py`): the right fact on the wrong object, the wrong body or role, an inverted result.
 

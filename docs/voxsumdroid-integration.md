@@ -1,6 +1,6 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current model: v11** (2026-10-02); v8 stays available for the widest coverage. v0.45 integrates v3; §9 lists what changes from v3 to v5, §10 from v5 to v8, and §11 from v8 to v11.
+**Current model: mobile-v1** (2026-10-03), a `.litertlm` file for LiteRT-LM that runs on the **CPU within a 3 GB RAM budget**: see **§12**, which supersedes the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
 
 One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
@@ -12,7 +12,8 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 
 | | |
 |---|---|
-| model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B QAT, Q4_0, Apache-2.0 |
+| model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B, as a LiteRT-LM `.litertlm` (mobile-v1) or a llama.cpp Q4_0 GGUF (v3–v11), Apache-2.0 |
+| file (mobile-v1, recommended) | `mobile-v1/gemma-4-E2B-meeting-agent-zh-mobile-v1.litertlm`, 2,588,138,320 bytes, sha256 `45664b0a6a6d02b3d9a7c388bee69657d69320e25571f36cf22ceff8fb54232c`, HF revision `6fbe081eed5fae4ba82d0319896d633a20812d5d`; LiteRT-LM, CPU, 4k context: **§12** |
 | file (v11) | `v11/gemma-4-E2B-meeting-agent-zh-v11-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `16c69abb76e09821bdd08a022091dbb9b84620cc589491f36d294e6ee92f73f0`, HF revision `a862b705f3aaf7edee2018f4e3abae286826f11d` |
 | system prompt (v11) | `v11/system_prompt.txt` at the same revision; identical to v5's and v8's |
 | file (v8) | `v8/gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf`, sha256 `7a1d8b6a1add7004744b309f625e8b0d78c804cf5ac7c4642de6816d316ebbcb`, revision `05285be248875e2940ba79b7646637f35a46acf8` |
@@ -382,3 +383,117 @@ IVOD, 38 held-out sessions (judge: Gemma-4-31B):
 - Faithfulness to the transcript is unchanged: about one statement in six is still contradicted, so §7 holds as is.
 
 **Recommendation.** Ship v11 as the default if the decisions section and the title are what users read first. Keep v8 selectable (same protocol, same prompts) for users who want the widest coverage. Both can be pinned in `ModelManager`; switching is a file swap.
+
+## 12. LiteRT-LM: the mobile model (recommended)
+
+**mobile-v1** is the reader as a **`.litertlm` file for [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)**, Google's on-device runtime. It replaces the llama.cpp GGUF for VoxSumDroid. The prompts, template, line format, note types, guards, title and prose calls of §4 are unchanged. Two things change: the runtime calls (§12.3), and a **4k context with a fresh session per window** (§12.4), which keeps the model within a 3 GB RAM budget.
+
+### 12.1 The file
+
+| | |
+|---|---|
+| file | `mobile-v1/gemma-4-E2B-meeting-agent-zh-mobile-v1.litertlm`, 2,588,138,320 bytes, sha256 `45664b0a6a6d02b3d9a7c388bee69657d69320e25571f36cf22ceff8fb54232c`, HF revision `6fbe081eed5fae4ba82d0319896d633a20812d5d` |
+| runtime | `com.google.ai.edge.litertlm:litertlm-android:0.17.1`, the version this was measured with |
+| system prompt | `mobile-v1/system_prompt.txt`: the same text as v5, v8 and v11 |
+| graph | Google's Gemma-4-E2B **mobile** graph ([`litert-community/gemma-4-E2B-it-litert-lm`](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm), Apache-2.0): int2 MLP in layers 15–34, int4 elsewhere, int8 KV cache, int8 static-range activations, Google's MTP drafter for speculative decoding |
+| weights | our fine-tune, written as integers into that graph on Google's own scales and bit widths: same size and kernels as Google's file |
+| changes to Google's file | (1) **fp32 activations on GPU**. Google's file asks for fp16, and on the Mali-G68 fp16 corrupts every prompt longer than a few thousand tokens, Google's own model included (timestamps come out as `[2:4:43:3]`). (2) The `prefill_1024` signature is disabled, so the runtime prefills in blocks of 128. Its attention buffers, sized by the whole cache, were most of the peak memory, and prefill is faster without it. |
+
+The file still holds Google's audio and vision sections. The reader never loads them: pass `null` for the vision and audio backends.
+
+### 12.2 Recommended settings
+
+**Use the CPU.** On the Reno7 it fits a 3 GB budget, decodes faster than the GPU, and prefills almost as fast. The GPU path is correct only with fp32 activations, and then it needs 3.5 GB.
+
+| | **CPU** (recommended) | GPU (only with more than 3.5 GB available) |
+|---|---|---|
+| backend | `Backend.CPU(threadCount = 8)` | `Backend.GPU()` |
+| `maxNumTokens` | **4096** | **4096** |
+| speculative decoding | **off**: it gains nothing on CPU | **on**: `ExperimentalFlags.enableSpeculativeDecoding = true` before creating the engine (decode 1.7× faster, same greedy output) |
+| `cacheDir` | the app's cache dir: the XNNPACK weight cache (~0.8 GB on disk). The first run builds it; later inits take 0.4 s | the app's cache dir: compiled GPU program and weights (~0.8 GB). First init ~45 s, then ~5 s |
+| sampler | `SamplerConfig(topK = 40, topP = 0.95, temperature = 0.2, seed = 0)`, as in §4.3 | same |
+| activations | int8 static ranges, from the graph | fp32, already set in the file. **Never repack it with fp16**: on the Mali-G68, fp16 corrupts the output even at 2.9k tokens |
+
+```kotlin
+ExperimentalFlags.enableSpeculativeDecoding = useGpu      // once, before the Engine; false on CPU
+val engine = Engine(EngineConfig(
+    modelPath = file.absolutePath,
+    backend = if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 8),
+    visionBackend = null, audioBackend = null,
+    maxNumTokens = 4096,
+    cacheDir = context.cacheDir.path))
+engine.initialize()
+val sessionConfig = SessionConfig(SamplerConfig(topK = 40, topP = 0.95, temperature = 0.2, seed = 0))
+```
+
+Use `useGpu = false` unless the device has RAM to spare. Run every call on one dedicated LLM thread, and keep **one session open at a time**.
+
+### 12.3 The protocol on the Session API
+
+`Session.runPrefill` takes raw text and parses the template's special tokens, so the template of §4.1 is written as text. Do not write `<bos>`: the engine adds it. We checked on the Reno7 that feeding a window in several `runPrefill` calls gives the same notes as one prefill of the whole prompt.
+
+**One session per window.** With a 4k context, each reading window gets a fresh session:
+
+```kotlin
+fun readWindow(k: Int, journal: String, lines: Flow<String>): String {
+    engine.createSession(sessionConfig).use { s ->
+        s.runPrefill(text("<|turn>system\n$SYSTEM<turn|>\n<|turn>user\n$journal<turn|>\n" +
+                          "<|turn>model\nNEXT<turn|>\n<|turn>user\n## 逐字稿片段 $k\n"))
+        // feed stable lines as they arrive, in segments of >= ~500 characters
+        lines.collect { s.runPrefill(text(it)) }
+        s.runPrefill(text("<turn|>\n<|turn>model\n"))
+        return s.runDecode()            // the notes, ending with NEXT; stops at <turn|> by itself
+    }
+}
+private fun text(t: String) = listOf(InputData.Text(t))
+```
+
+- **`{journal}`** is `## 筆記本（至今）\n` plus the journal **compacted to ≤ 1,200 tokens** (§4.4: decisions first, then open issues, then actions, newest first within each), or `（尚無筆記）` at the start.
+- **Close a window** at **1,500 tokens** of transcript lines, not 2,000. The prompt then stays under ~3.7k tokens, and the reply under 400.
+- **Token counts.** The Kotlin API has no tokenizer. For zh-TW, count **1.63 characters per token** (measured on our prompts).
+- **Feed sizes.** Each `runPrefill` call costs about 1.3 s of fixed overhead on the GPU, so feed segments of at least ~500 characters (about 20–30 s of speech).
+- **Output cap.** Version 0.17.1 has no maximum output length in Kotlin. The model ends every reply with `NEXT<turn|>` on its own. As a guard, decode with `generateContentStream` and call `session.cancelProcess()` once the reply holds `\nNEXT` or about 650 characters (400 tokens).
+- **Title and prose** (§4.6, §4.7): a fresh session, `runPrefill("<|turn>user\n{prompt}<turn|>\n<|turn>model\n")`, then `runDecode()`. Both stop at `<turn|>` by themselves. **Compact the journal first**: a whole meeting's journal (~130 notes) is longer than the 4k context. Keep at most **3,900 characters** of notes (~2.4k tokens), chosen as in §4.4 (decisions, then open issues, then actions, newest first within each, then the most recent other notes), in chronological order (`compact_notes()` in [`eval/conversion_prompts.py`](../eval/conversion_prompts.py)). Without it, most calls fail or truncate: titles fall from 4.05 to 3.67.
+- **If you keep one session across windows** (the §4 protocol with a 8k context), start each new user turn with `"\n<|turn>user\n…"`, **without** `<turn|>`. LiteRT-LM keeps the stop token it sampled as the next input, so it is already in the cache (`tasks.cc`: "add the stop token as pending token"). Writing it again would put two in the history.
+
+### 12.4 Quality
+
+Evaluated through LiteRT-LM itself, on the 38 held-out IVOD sessions, with the harness and judge of §9–§11. The runs used the host's GPU backend (fp32 activations). The phone's CPU backend computes with int8 activations, and gave the same notes on our spot checks. The 4k column uses the per-window protocol of §12.3, and title and prose calls on a journal compacted to 3,900 characters.
+
+| | v8 (llama.cpp, 8k) | v11 (llama.cpp, 8k) | **mobile-v1, 8k** | **mobile-v1, 4k (shipped)** |
+|---|---|---|---|---|
+| minutes contradicted | 17 % | 17 % | 17 % | **17 %** |
+| unsupported | 5 % | 5 % | 6 % | 5 % |
+| coverage | **0.94** | 0.89 | 0.91 | 0.92 |
+| 決議事項 items really decided | 62 % | 71 % | **79 %** | 75 % |
+| 待辦 items really assigned | **68 %** | 66 % | 67 % | 66 % |
+| prose: sentences contradicting the notes | 8 % | 8 % | 9 % | 10 % |
+| title (1–5) | 4.05 | **4.21** | 4.08 | 4.05 |
+
+mobile-v1 is as faithful as v11, with better coverage and a more precise decision section. The 4k context costs almost nothing: the same faithfulness, decisions slightly less precise (75 % against 79 % at 8k), titles and prose on a compacted journal within a point of the 8k figures. Its prose is longer than v11's (~1,000 characters, against ~650).
+
+### 12.5 Speed and memory on the Reno7
+
+Measured with this file on the Reno7 (Dimensity 900, 8 GB), `maxNumTokens = 4096`, on a 2,881-token reading prompt: system, a journal of 1,167 tokens, and a window of 1,208 tokens. These are single runs, with nothing else running (no ASR alongside). Peak memory is the largest of `dumpsys meminfo` TOTAL RSS, sampled every 3 s, and `VmHWM`.
+
+| | **CPU, 8 threads** | GPU fp32 + MTP drafter | GPU fp16 (Google's setting) |
+|---|---|---|---|
+| prefill | **118 tok/s** (25 s) | 128 tok/s (22 s) | 162 tok/s |
+| decode | **~9.8 tok/s** | ~7.5 tok/s | — |
+| engine init | 0.4 s (cache built) | 5 s (cache built) | — |
+| **peak RSS** | **2.28 GB** (0.97 GB of it anonymous) | 3.52 GB (2.65 GB of it GPU driver memory) | 2.78 GB |
+| output | correct | correct | **corrupt** (`[2:444:24]`) |
+| first run ever (builds the cache) | 3.13 GB peak, init 6 s | 3.61 GB, init 43 s | — |
+
+- **Per window**, on CPU: ~25 s of prefill (system + journal + window) and 15–40 s of decode. A 1,500-token window is about 3–4 min of speech, so the reader keeps up with a live meeting with time to spare. Feeding lines as they arrive (§12.3) hides most of the prefill.
+- **The first run** builds the XNNPACK cache and peaks at 3.13 GB, once per install (or after a library update). Do it when the model is downloaded, before any recording, with nothing else loaded.
+- **Against llama.cpp** (v11 Q4_0 at 8k, §4.4), the reader prefills 15× faster and decodes 1.5–2× faster.
+- **Why 4k.** The graph's attention buffers are sized by the whole cache, at every layer, so memory grows quickly with `maxNumTokens`. On an x86 host with the same graph, the peak is 1.06 GB at 4k, 2.92 GB at 8k, and 4.47 GB at 8k with Google's `prefill_1024`. The KV cache itself is int8 and small: ~75 MB at 8k.
+
+**Still to measure in the app:** the same with ASR and diarization resident, and heat over a full meeting.
+
+### 12.6 How it was built
+
+1. **Fine-tune on Google's mobile weights.** A LoRA trained in float, with Google's int8 activation ranges in the loop (`distill/sft_mobile_qat.py`). The loss distils v11: 0.7 × cross-entropy on v11's top-32 next-token distributions, plus 0.3 × cross-entropy on the gold (`distill/kd_teacher_logits.py`). This carries v8's GRPO and v11's contrastive DPO without porting them to the mobile weights.
+2. **GPTQ onto Google's grid.** Rounding the merged weights to the nearest integer erases the fine-tune: almost every change is below half a 2-bit or 4-bit step. GPTQ instead rounds one input column at a time and pushes each rounding error onto the columns not yet rounded, with Google's per-channel scales held fixed (`distill/gptq_mobile.py`). About 0.2 % of the integers change.
+3. **Injection.** Those integers are written into Google's `.tflite`, bit for bit. The file is then repacked with fp32 GPU activations, and with the `prefill_1024` signature disabled (`distill/inject_litertlm.py`).

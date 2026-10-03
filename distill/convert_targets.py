@@ -20,7 +20,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from eval.conversion_prompts import PROSE_MAX, TITLE_MAX, prose_prompt, title_prompt  # noqa: E402
+from eval.conversion_prompts import PROSE_MAX, TITLE_MAX, compact_notes, prose_prompt, title_prompt  # noqa: E402
 
 
 def main():
@@ -31,6 +31,8 @@ def main():
     ap.add_argument("--model", default="q38")
     ap.add_argument("--out", required=True)
     ap.add_argument("--parallel", type=int, default=8)
+    ap.add_argument("--max-journal-chars", type=int, default=0,
+                    help="compact each journal to this many characters first (a 4k-context runtime)")
     a = ap.parse_args()
     keep = set(json.load(open(a.only))["heldout"]) if a.only else None
     os.makedirs(a.out, exist_ok=True)
@@ -41,6 +43,8 @@ def main():
             if keep is not None and sid not in keep:
                 continue
             notes = json.load(open(f, encoding="utf-8")).get("notes") or []
+            if notes and a.max_journal_chars:
+                notes = compact_notes(notes, a.max_journal_chars)
             if notes:
                 jobs.append((f"{os.path.basename(d)}__{sid}" if len(a.journals) > 1 else sid, notes))
     urls = a.urls.split(",")
@@ -56,8 +60,12 @@ def main():
         p = os.path.join(a.out, key + ".json")
         if os.path.exists(p):
             return
-        rec = {"notes": notes, "title_raw": gen(i, title_prompt(notes), TITLE_MAX),
-               "prose_raw": gen(i, prose_prompt(notes), PROSE_MAX)}
+        try:
+            rec = {"notes": notes, "title_raw": gen(i, title_prompt(notes), TITLE_MAX),
+                   "prose_raw": gen(i, prose_prompt(notes), PROSE_MAX)}
+        except Exception as e:                      # e.g. a journal longer than a server slot
+            print(f"skip {key}: {str(e)[:120]}", flush=True)
+            return
         json.dump(rec, open(p, "w", encoding="utf-8"), ensure_ascii=False)
 
     list(ThreadPoolExecutor(a.parallel).map(one, enumerate(jobs)))

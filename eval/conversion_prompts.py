@@ -54,3 +54,18 @@ def form(raw, notes):
             "citations": len(cites), "bad_citations": sum(c not in known for c in cites),
             "sentences": len(sents), "cited_sentences": sum(bool(CITE.search(s)) for s in sents),
             "chars": len(CITE.sub("", body).strip())}
+
+
+def compact_notes(notes, budget_chars):
+    """A journal that fits a small context (LiteRT-LM at 4k tokens): decisions first, then open issues,
+    then actions, newest first within each, then the most recent other notes, kept in chronological
+    order. The same priorities as the reading restart (docs/voxsumdroid-integration.md §4.4)."""
+    key = {"DECISION": 0, "OPEN-ISSUE": 1, "ACTION": 2}
+    order = sorted(range(len(notes)), key=lambda i: (key.get((notes[i].get("tag") or "").upper(), 3), -i))
+    chosen, used = set(), 0
+    for i in order:
+        t = len(notes[i].get("text", "")) + 24
+        if used + t <= budget_chars:
+            chosen.add(i)
+            used += t
+    return [notes[i] for i in sorted(chosen)]

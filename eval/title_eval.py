@@ -21,6 +21,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from eval.conversion_prompts import compact_notes  # noqa: E402
 from eval.realtime_agent import render  # noqa: E402
 
 # VoxSumDroid's exact title call (core/reader/ReaderLane.title, v0.45.1): the whole journal, as
@@ -77,11 +78,22 @@ def main():
     ap.add_argument("--judge", required=True, help="url:model")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--max-journal-chars", type=int, default=0,
+                    help="compact each journal to this many characters first (a 4k-context runtime)")
     a = ap.parse_args()
     sids = [s for s in json.load(open(a.split))["heldout"] if os.path.exists(f"{a.run}/{s}.json")]
 
     def one(sid):
+        try:
+            return one_(sid)
+        except Exception as e:
+            print(f"skip {sid}: {str(e)[:120]}", flush=True)
+            return {"id": sid, "title": "", "chars": 0, "score": None}
+
+    def one_(sid):
         notes = json.load(open(f"{a.run}/{sid}.json", encoding="utf-8"))["notes"]
+        if a.max_journal_chars:
+            notes = compact_notes(notes, a.max_journal_chars)
         journal = "\n".join(render(n) for n in notes)
         title = next((l for l in chat(a.titler, TITLE.format(journal=journal), 48).splitlines() if l.strip()), "").strip("「」\"'*# ")[:40]
         gold = json.load(open(f"{a.gold}/{sid}.json", encoding="utf-8"))
