@@ -1,6 +1,6 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 3.0 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
+**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 2.7 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
 
 One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
@@ -531,8 +531,8 @@ On the Reno7 (Dimensity 900, 8 GB): context 4,096 tokens, a 2,881-token reading 
 
 | | E2B, LiteRT-LM CPU | E2B, LiteRT-LM GPU fp32 + MTP (reference) | **E2B, forked engine CPU** | E4B, LiteRT-LM CPU | E4B, LiteRT-LM GPU fp32 + MTP (reference) | **E4B, forked engine CPU** |
 |---|---|---|---|---|---|---|
-| peak RSS, warm | 2.28 GB | 3.52 GB | **1.26 GB** | 4.58 GB | 3.0 GB, 5.5 GB `VmHWM` during init | **2.97 GB** |
-| peak RSS, first run | 3.13 GB | 3.61 GB | **1.48 GB** | 5.04 GB | 3.06 GB, 5.5 GB during init | **3.01 GB** |
+| peak RSS, warm | 2.28 GB | 3.52 GB | **1.26 GB** | 4.58 GB | 3.0 GB, 5.5 GB `VmHWM` during init | **2.65 GB** |
+| peak RSS, first run | 3.13 GB | 3.61 GB | **1.48 GB** | 5.04 GB | 3.06 GB, 5.5 GB during init | **≈ 2.7 GB** (3.01 GB before the table release; not re-measured) |
 | prefill | 118 tok/s | 128 tok/s | **114–130 tok/s** | 41 tok/s | 16–27 tok/s | **43 tok/s** |
 | decode | ~9.8 tok/s | ~7.5 tok/s | **~9 tok/s** | ~3.5 tok/s | ~1–2.5 tok/s | **~4 tok/s** |
 | minutes contradicted (IVOD-38) | 17 % (4k) | same weights | same weights | 11 % (8k) | same weights | same weights |
@@ -548,7 +548,9 @@ On the Reno7 (Dimensity 900, 8 GB): context 4,096 tokens, a 2,881-token reading 
   - E4B: ~70 s of prefill and 40–100 s of decode. That is still under the 3–4 min of speech that a window covers.
   - Feeding the lines as they arrive (§13.3) hides most of the prefill.
 
-**Choosing.** With ASR and diarization resident, E2B (1.3 GB) leaves the most room. Pick E4B (3.0 GB) for fewer factual errors, if ASR fits next to it. The two have not yet been measured together on the phone.
+**Table release.** The embedder and per-layer-embedder tables (1 GB for E4B) are lookup tables: a token reads a few rows, but the pages read stay resident, and more of them as the vocabulary seen grows (0.24 GB after one 3k-token prompt, more over a meeting). The engine drops those clean pages every 8 tokens; a later lookup reads them back from the page cache. On the Reno7 this cut E4B's peak from 2.97 to 2.65 GB (`VmHWM` 2,821 → 2,586 MB) with identical output tokens and the same speed (43 tok/s prefill, 4.1 tok/s decode); the table lookups cost 0.5 s over a 2,881-token prompt. Fork commit `bd9d499`; `MFA_KEEP_TABLES=1` turns it off. What is left of E4B's 2.65 GB: the weight cache 2.16 GB (read in full for every token), anonymous memory 0.41 GB, the original graph 0.07 GB. The E2B figures above were measured before this change and are not re-measured.
+
+**Choosing.** With ASR and diarization resident, E2B (1.3 GB) leaves the most room. Pick E4B (2.7 GB) for fewer factual errors, if ASR fits next to it. The two have not yet been measured together on the phone.
 
 ### 13.3 Integrating into VoxSumDroid
 
@@ -607,7 +609,7 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDRO
 ### 13.4 Limits
 
 - **No GPU, vision or audio.** The engine runs on the CPU only, and loads no vision or audio sections. Speculative decoding (MTP) is not wired: it gained nothing on CPU anyway (§12.2).
-- **Context.** It is fixed at load (`--ctx`). Use 4,096. 8k works, and stays under 3 GB for E2B but not for E4B.
+- **Context.** It is fixed at load (`--ctx`). Use 4,096. 8k works, and stays under 3 GB for E2B but not for E4B (not re-measured after the table release).
 - **Still to measure:**
   - with ASR and diarization resident;
   - heat over a full meeting;
