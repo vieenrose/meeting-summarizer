@@ -531,7 +531,7 @@ On the Reno7 (Dimensity 900, 8 GB): context 4,096 tokens, a 2,881-token reading 
 
 | | E2B, LiteRT-LM CPU | E2B, LiteRT-LM GPU fp32 + MTP (reference) | **E2B, forked engine CPU** | E4B, LiteRT-LM CPU | E4B, LiteRT-LM GPU fp32 + MTP (reference) | **E4B, forked engine CPU** |
 |---|---|---|---|---|---|---|
-| peak RSS, warm | 2.28 GB | 3.52 GB | **1.26 GB** | 4.58 GB | 3.0 GB, 5.5 GB `VmHWM` during init | **2.65 GB** |
+| peak RSS, warm | 2.28 GB | 3.52 GB | **1.08 GB** | 4.58 GB | 3.0 GB, 5.5 GB `VmHWM` during init | **2.65 GB** |
 | peak RSS, first run | 3.13 GB | 3.61 GB | **1.48 GB** | 5.04 GB | 3.06 GB, 5.5 GB during init | **≈ 2.7 GB** (3.01 GB before the table release; not re-measured) |
 | prefill | 118 tok/s | 128 tok/s | **114–130 tok/s** | 41 tok/s | 16–27 tok/s | **43 tok/s** |
 | decode | ~9.8 tok/s | ~7.5 tok/s | **~9 tok/s** | ~3.5 tok/s | ~1–2.5 tok/s | **~4 tok/s** |
@@ -540,7 +540,26 @@ On the Reno7 (Dimensity 900, 8 GB): context 4,096 tokens, a 2,881-token reading 
 | 決議事項 really decided / 待辦 really assigned | 75 % / 66 % | | | 75 % / 76 % | | |
 | prose contradicting the notes / title (1–5) | 10 % / 4.05 | | | 8 % / 4.29 | | |
 
-- **Quality** was measured through LiteRT-LM on the host. The forked engine gives the same greedy tokens on the prompts we compared (the first 30 or more, E2B and E4B). Further out, the outputs drift apart at near-ties, so they should be compared statistically: the IVOD-38 evaluation of E4B through the forked engine at 4k is in progress.
+- **Quality** was measured through LiteRT-LM on the host. The forked engine gives the same greedy tokens on the prompts we compared (the first 30 or more, E2B and E4B). Further out, the outputs drift apart at near-ties, so quality was also measured through the forked engine itself (§13.2a).
+- **Peak RSS after the table release**: E2B 1.08 GB at 4k and 1.16 GB at 8k; E4B 2.65 GB at 4k and 2.82 GB at 8k. The 1.26 GB figure for E2B predates the release.
+
+### 13.2a Quality through the forked engine, 4k against 8k
+
+A quick check on 13 sessions (every third held-out session; about ±4 points), CPU, forked engine, same judge as §9–§11. Speed is from the Reno7.
+
+| | E2B 4k | E2B 8k | E4B 4k | E4B 8k |
+|---|---|---|---|---|
+| notes contradicted | 16 % | 19 % | 11 % | 11 % |
+| unsupported | 6 % | 5 % | 4 % | 6 % |
+| coverage | 0.87 | 0.86 | 0.93 | 0.92 |
+| 決議事項 really decided | 78 % | 76 % | 75 % | 79 % |
+| 待辦 really assigned | 74 % | 73 % | 76 % | 74 % |
+| key figures contradicted | 19 % | 21 % | 15 % | 14 % |
+| decision recall | 64 % | 69 % | 73 % | 80 % |
+| prefill / decode (tok/s) | 118 / 8.6 | 90 / 6.4 | 43 / 4.1 | 38 / 3.3 |
+
+E4B at 4k through the forked engine matches the IVOD-38 figures of §13.2 (11 % contradicted). The 8k context adds only decision recall (+7 points for each model) and costs 10 to 20 % of the speed, so **4k stays the recommended setting**. A context change does not change how often the journal is compacted, because a 4k window holds a single 1,500-token window: about 29 restarts per session for E2B and E4B alike (16 to 21 at 8k).
+
 - **GPU.** On the Mali-G68 the GPU needs fp32 activations, because fp16 corrupts long prompts. With fp32 it is slower than the CPU for E4B and decodes slower for E2B. Do not use it.
 - **First run.** When the weight-cache file is missing, the engine builds it in a compile-only pass, then reloads warm. During the pass it releases the cache file's pages as they are written. The peak stays at the warm level, so no cache needs to be shipped pre-built. Build it once after the download, before any recording.
 - **Per window** (1,500 tokens of transcript, prompt ~2.9k):
@@ -609,8 +628,7 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDRO
 ### 13.4 Limits
 
 - **No GPU, vision or audio.** The engine runs on the CPU only, and loads no vision or audio sections. Speculative decoding (MTP) is not wired: it gained nothing on CPU anyway (§12.2).
-- **Context.** It is fixed at load (`--ctx`). Use 4,096. 8k works, and stays under 3 GB for E2B but not for E4B (not re-measured after the table release).
+- **Context.** It is fixed at load (`--ctx`). Use 4,096. 8k works and stays under 3 GB for both (E4B 2.82 GB), but it only improves decision recall and is slower (§13.2a).
 - **Still to measure:**
   - with ASR and diarization resident;
   - heat over a full meeting;
-  - E4B's quality at 4k through this engine (in progress on the host).
