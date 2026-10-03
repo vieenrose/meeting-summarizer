@@ -50,7 +50,7 @@ mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteR
 | minutes contradicted (IVOD 38) | 17 % | 17 % |
 | 決議事項 really decided | 71 % | 75 % |
 
-**Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12](docs/voxsumdroid-integration.md#12-litert-lm-the-mobile-model-recommended).
+**Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12–§13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 
 ## v11: more precise decisions, better titles
 

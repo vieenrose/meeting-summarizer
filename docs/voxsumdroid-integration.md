@@ -1,6 +1,6 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current model: mobile-v1** (2026-10-03), a `.litertlm` file for LiteRT-LM that runs on the **CPU within a 3 GB RAM budget**: see **§12**, which supersedes the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
+**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 3.0 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
 
 One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
@@ -384,7 +384,7 @@ IVOD, 38 held-out sessions (judge: Gemma-4-31B):
 
 **Recommendation.** Ship v11 as the default if the decisions section and the title are what users read first. Keep v8 selectable (same protocol, same prompts) for users who want the widest coverage. Both can be pinned in `ModelManager`; switching is a file swap.
 
-## 12. LiteRT-LM: the mobile model (recommended)
+## 12. LiteRT-LM: the mobile model
 
 **mobile-v1** is the reader as a **`.litertlm` file for [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)**, Google's on-device runtime. It replaces the llama.cpp GGUF for VoxSumDroid. The prompts, template, line format, note types, guards, title and prose calls of §4 are unchanged. Two things change: the runtime calls (§12.3), and a **4k context with a fresh session per window** (§12.4), which keeps the model within a 3 GB RAM budget.
 
@@ -403,9 +403,9 @@ The file still holds Google's audio and vision sections. The reader never loads 
 
 ### 12.2 Recommended settings
 
-**Use the CPU.** On the Reno7 it fits a 3 GB budget, decodes faster than the GPU, and prefills almost as fast. The GPU path is correct only with fp32 activations, and then it needs 3.5 GB.
+**Use the CPU only**, and preferably the forked engine of §13: same weights and protocol, at half the memory. On the Reno7 the GPU decodes slower than the CPU and needs more memory: 3.5 GB for E2B. With E4B it is also slower to prefill, and its peak passes 5 GB during init. The GPU column below is kept for reference.
 
-| | **CPU** (recommended) | GPU (only with more than 3.5 GB available) |
+| | **CPU** (recommended) | GPU (reference only) |
 |---|---|---|
 | backend | `Backend.CPU(threadCount = 8)` | `Backend.GPU()` |
 | `maxNumTokens` | **4096** | **4096** |
@@ -415,10 +415,9 @@ The file still holds Google's audio and vision sections. The reader never loads 
 | activations | int8 static ranges, from the graph | fp32, already set in the file. **Never repack it with fp16**: on the Mali-G68, fp16 corrupts the output even at 2.9k tokens |
 
 ```kotlin
-ExperimentalFlags.enableSpeculativeDecoding = useGpu      // once, before the Engine; false on CPU
 val engine = Engine(EngineConfig(
     modelPath = file.absolutePath,
-    backend = if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 8),
+    backend = Backend.CPU(threadCount = 8),
     visionBackend = null, audioBackend = null,
     maxNumTokens = 4096,
     cacheDir = context.cacheDir.path))
@@ -426,7 +425,7 @@ engine.initialize()
 val sessionConfig = SessionConfig(SamplerConfig(topK = 40, topP = 0.95, temperature = 0.2, seed = 0))
 ```
 
-Use `useGpu = false` unless the device has RAM to spare. Run every call on one dedicated LLM thread, and keep **one session open at a time**.
+Run every call on one dedicated LLM thread, and keep **one session open at a time**.
 
 ### 12.3 The protocol on the Session API
 
@@ -497,3 +496,119 @@ Measured with this file on the Reno7 (Dimensity 900, 8 GB), `maxNumTokens = 4096
 1. **Fine-tune on Google's mobile weights.** A LoRA trained in float, with Google's int8 activation ranges in the loop (`distill/sft_mobile_qat.py`). The loss distils v11: 0.7 × cross-entropy on v11's top-32 next-token distributions, plus 0.3 × cross-entropy on the gold (`distill/kd_teacher_logits.py`). This carries v8's GRPO and v11's contrastive DPO without porting them to the mobile weights.
 2. **GPTQ onto Google's grid.** Rounding the merged weights to the nearest integer erases the fine-tune: almost every change is below half a 2-bit or 4-bit step. GPTQ instead rounds one input column at a time and pushes each rounding error onto the columns not yet rounded, with Google's per-channel scales held fixed (`distill/gptq_mobile.py`). About 0.2 % of the integers change.
 3. **Injection.** Those integers are written into Google's `.tflite`, bit for bit. The file is then repacked with fp32 GPU activations, and with the `prefill_1024` signature disabled (`distill/inject_litertlm.py`).
+
+## 13. The forked engine (recommended)
+
+The weights and protocol are the §12 ones, run by our own CPU engine instead of LiteRT-LM. It halves the memory of E2B and brings **E4B** under 3 GB. E4B contradicts the transcript less than E2B (11 % of minutes against 17 %).
+
+**Run it on the CPU only.** The GPU decodes slower on the Reno7 and needs more memory (§13.2).
+
+### 13.1 What it is, and the files
+
+**Code.** [vieenrose/LiteRT-LM](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention), branch `mobile-fused-attention`, commit `675471c`, directory `contrib/mobile_fused_attention/`. Its README gives the cause and the fix in detail. In short:
+- **Graph rewrite.** In Google's mobile graph, each attention block is `runtime_bmm → SELECT_V2 → SOFTMAX → runtime_bmm`. The rewrite turns it into one custom op, `voxsum.i8_attention`. The op reads the int8 KV cache on its live columns only, with NEON dot-product tiles.
+- **Why memory drops.** LiteRT-LM's CPU path gives each attention partition an XNNPACK workspace of ctx² × 4 bytes × KV heads. That is what pushes E4B to 4.6 GB. The fused op allocates nothing of that size.
+- **Engine.** `mfa_engine` is a standalone driver. It runs on the stock `libLiteRt.so` from the `com.google.ai.edge.litert:litert:2.1.6` AAR, the one `mosslite` already ships. It reproduces LiteRT-LM's CPU protocol: magic-number context length, embedder and per-layer embedder, `prefill_128`, an in-place int8 KV cache, and an XNNPACK weight-cache file.
+- **Output.** Greedy output is token for token that of the unfused graph.
+
+| | E2B | E4B |
+|---|---|---|
+| HF repo | [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF), folder `mobile-v1/mfa/` | [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT), folder `mfa/` |
+| `prefill_decode_fused.tflite` | 818,394,320 bytes, sha256 `6a7555ccc349be490fca4ed63ebf7fdafd8e4a4510012f3ae9c38f8009b5fcae` | 2,260,210,576 bytes, sha256 `34858194f4f596fae132470a2e0f2f0f276e540c7af8502e4ef7cca99e871424` |
+| `Section2_…_embedder.tflite` | 104 MB | 171 MB |
+| `Section3_…_per_layer_embedder.tflite` | 1.28 GB | 0.84 GB |
+| `Section1_SP_Tokenizer.spiece` | the Gemma-4 SentencePiece model (§13.3) | same |
+| `LlmMetadataProto.pbtext` | chat template (reference only; §4.1 is the same) | same |
+| total download | 2.2 GB | 3.3 GB |
+| XNNPACK weight cache, built on first run | 0.79 GB | 2.2 GB |
+| system prompt | `mobile-v1/system_prompt.txt` | `system_prompt.txt` (the same text) |
+
+The `.litertlm` files themselves are not needed by this engine; the folders above are complete.
+
+### 13.2 Measurements
+
+On the Reno7 (Dimensity 900, 8 GB): context 4,096 tokens, a 2,881-token reading prompt, 8 threads, nothing else running. Peak RSS is the larger of `dumpsys meminfo` TOTAL RSS and `VmHWM`. "First run" means the weight cache does not exist yet.
+
+| | E2B, LiteRT-LM CPU | E2B, LiteRT-LM GPU fp32 + MTP (reference) | **E2B, forked engine CPU** | E4B, LiteRT-LM CPU | E4B, LiteRT-LM GPU fp32 + MTP (reference) | **E4B, forked engine CPU** |
+|---|---|---|---|---|---|---|
+| peak RSS, warm | 2.28 GB | 3.52 GB | **1.26 GB** | 4.58 GB | 3.0 GB, 5.5 GB `VmHWM` during init | **2.97 GB** |
+| peak RSS, first run | 3.13 GB | 3.61 GB | **1.48 GB** | 5.04 GB | 3.06 GB, 5.5 GB during init | **3.01 GB** |
+| prefill | 118 tok/s | 128 tok/s | **114–130 tok/s** | 41 tok/s | 16–27 tok/s | **43 tok/s** |
+| decode | ~9.8 tok/s | ~7.5 tok/s | **~9 tok/s** | ~3.5 tok/s | ~1–2.5 tok/s | **~4 tok/s** |
+| minutes contradicted (IVOD-38) | 17 % (4k) | same weights | same weights | 11 % (8k) | same weights | same weights |
+| coverage | 0.92 | | | 0.94 | | |
+| 決議事項 really decided / 待辦 really assigned | 75 % / 66 % | | | 75 % / 76 % | | |
+| prose contradicting the notes / title (1–5) | 10 % / 4.05 | | | 8 % / 4.29 | | |
+
+- **Quality** was measured through LiteRT-LM on the host. The forked engine gives the same greedy tokens on the prompts we compared (the first 30 or more, E2B and E4B). Further out, the outputs drift apart at near-ties, so they should be compared statistically: the IVOD-38 evaluation of E4B through the forked engine at 4k is in progress.
+- **GPU.** On the Mali-G68 the GPU needs fp32 activations, because fp16 corrupts long prompts. With fp32 it is slower than the CPU for E4B and decodes slower for E2B. Do not use it.
+- **First run.** When the weight-cache file is missing, the engine builds it in a compile-only pass, then reloads warm. During the pass it releases the cache file's pages as they are written. The peak stays at the warm level, so no cache needs to be shipped pre-built. Build it once after the download, before any recording.
+- **Per window** (1,500 tokens of transcript, prompt ~2.9k):
+  - E2B: ~25 s of prefill and 15–40 s of decode.
+  - E4B: ~70 s of prefill and 40–100 s of decode. That is still under the 3–4 min of speech that a window covers.
+  - Feeding the lines as they arrive (§13.3) hides most of the prefill.
+
+**Choosing.** With ASR and diarization resident, E2B (1.3 GB) leaves the most room. Pick E4B (3.0 GB) for fewer factual errors, if ASR fits next to it. The two have not yet been measured together on the phone.
+
+### 13.3 Integrating into VoxSumDroid
+
+**Build** (NDK r26d, arm64, against the AAR's `libLiteRt.so`; full command in the fork's README):
+
+```bash
+cmake .. -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-26 -DMFA_MARCH=armv8.2-a+dotprod \
+  -DLITERT_INCLUDE=<litert/c headers> -DLITERT_LIB=<arm64 libLiteRt.so from the 2.1.6 AAR> \
+  -DOpenMP_CXX_FLAGS=-fopenmp -DOpenMP_CXX_LIB_NAMES=omp \
+  -DOpenMP_omp_LIBRARY=$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/17/lib/linux/aarch64/libomp.a
+```
+
+- **CPU requirement.** The kernel needs the ARMv8.2 dot-product extension, present on the Dimensity 900 and on most arm64 phones since 2018. Check `asimddp` in `/proc/cpuinfo` and fall back to §12 when it is missing.
+- **Threads.** The engine sets `KMP_BLOCKTIME=0` and `OMP_WAIT_POLICY=PASSIVE` itself: OpenMP threads that spin against XNNPACK's pool cost 40 % of prefill.
+
+**Process.** There are two ways to run the engine.
+
+- **A: available now.** Ship the engine as an executable and drive its line protocol.
+  1. Package the binary as `jniLibs/arm64-v8a/libmfa_engine.so`, with `packaging { jniLibs.useLegacyPackaging = true }`, so that it is extracted to `applicationInfo.nativeLibraryDir`, where the app may execute it.
+  2. Start it with `ProcessBuilder(nativeLibraryDir + "/libmfa_engine.so", "--serve", "--dir", modelDir, "--main", modelDir + "/prefill_decode_fused.tflite", "--fused", "--ctx", "4096", "--threads", "8", "--weight-cache", filesDir + "/mfa.wcache")`.
+  3. Wait for `READY <ctx>`, then keep it resident for the whole meeting.
+
+  Its memory is its own process's, outside the Java heap. `libLiteRt.so` must sit in the same `nativeLibraryDir`, which it already does through the AAR. Set `LD_LIBRARY_PATH` to that directory in the `ProcessBuilder` environment.
+- **B: the target.** Run the engine in process, behind JNI, on the `mosslite` pattern.
+  - JNI surface: `nativeLoad(dir, ctx, threads, cachePath) → handle`, `nativeGenerate(handle, ids, maxNew, temp, topK, topP, seed, callback)`, `nativeCancel(handle)`, `nativeFree(handle)`. This is the surface `llm_jni.cpp` already exposes for llama.cpp.
+  - Engine side: move the `--serve` loop's body (`prefill(ids, reuse, n)`, `step`, `sample`, and the `fed` prefix) out of `main()` into a class. That refactor is not done yet. Option A uses the same code unchanged.
+
+**The line protocol** (stdin/stdout, one request at a time):
+
+```
+→ R <max_new> <temperature> <top_k> <top_p> <seed> <n> <id_1> … <id_n>
+← T <id>                       one line per generated token
+← D <reason> <prefilled> <reused> <prefill_s> <decode_s>      reason: stop | length | cancel | ctx
+← E <message>                  bad request (e.g. prompt longer than the context)
+→ C                            while tokens stream: cancel (e.g. once the reply holds "\nNEXT")
+```
+
+- **Prefix reuse.** The engine reuses the longest prefix of the new prompt that is already in its KV cache, and prefills only the rest. There are no sessions to manage. Send the whole prompt each time.
+  - A new window shares the system prompt with the previous one: only the journal and the transcript are prefilled.
+  - `R 0 …` prefills without generating. Use it to **feed lines as they arrive**: send the growing prompt with `max_new = 0` after each ASR segment of at least ~500 characters, then the complete prompt with `max_new = 400` when the window closes. Only the tail is computed at that point.
+- **Stop tokens.** Generation stops at `<eos>` (1), `<turn|>` (106) and 50. Cancel with `C` once the decoded text holds `\nNEXT`, or at 400 tokens.
+- **Sampling.** Use §12.2's: `temperature 0.2`, `top_k 40`, `top_p 0.95`, a fixed seed.
+
+**Tokenizer.** The engine takes token ids. Load `Section1_SP_Tokenizer.spiece` with [SentencePiece](https://github.com/google/sentencepiece) (C++, builds with the NDK; or a Kotlin port).
+- **Checked against HF's tokenizer.** On a 2,412-token zh-TW prompt, its `encode()` gives exactly the ids of `google/gemma-4-E4B-it`'s tokenizer. It parses the template's special tokens by itself (`<|turn>` = 105, `<turn|>` = 106).
+- **`<bos>`.** Prepend it yourself (id 2), unlike LiteRT-LM.
+- **Decoding.** Decode the generated ids incrementally with `DecodeIds()` over the reply so far.
+- **Exact token counts.** These replace §12.3's estimate of 1.63 characters per token. Apply the window (1,500 tokens) and journal (1,200 tokens) limits exactly.
+
+**The protocol of §12.3 otherwise applies unchanged.** It covers:
+- the template (§4.1), written as text and then tokenized;
+- a 4k context with one window per prompt, and the compacted journal at its head;
+- title and prose calls on notes compacted to 3,900 characters, each a fresh prompt.
+
+### 13.4 Limits
+
+- **No GPU, vision or audio.** The engine runs on the CPU only, and loads no vision or audio sections. Speculative decoding (MTP) is not wired: it gained nothing on CPU anyway (§12.2).
+- **Context.** It is fixed at load (`--ctx`). Use 4,096. 8k works, and stays under 3 GB for E2B but not for E4B.
+- **Still to measure:**
+  - with ASR and diarization resident;
+  - heat over a full meeting;
+  - E4B's quality at 4k through this engine (in progress on the host).
