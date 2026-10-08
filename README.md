@@ -17,9 +17,7 @@ One small model does three jobs:
 |---|---|---|---|---|---|---|
 | **Gemma-4-E4B mobile-v1** | forked engine, CPU | **11 %** | **0.94** | 2.65 GB | 43 / ~4 tok/s | most faithful; if ASR fits next to it |
 | **Gemma-4-E2B mobile-v1** | forked engine, CPU | 17 % | 0.92 | **1.08 GB** | 118 / ~9 tok/s | most room for ASR and diarization |
-| Gemma-4-E2B mobile-v1 | stock LiteRT-LM, CPU | 17 % | 0.92 | 2.28 GB | 118 / ~10 tok/s | fallback when the CPU lacks `dotprod` |
 | Gemma-3-270M | stock LiteRT-LM, CPU, int8 QAT | 58 % (13 sessions) | 0.64 | — | much faster | **smoke test only** |
-| Gemma-4-E2B v3–v11 | llama.cpp Q4_0 GGUF | 17–18 % | 0.89–0.94 | — | 8 / 4–7 tok/s | earlier builds |
 
 - **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 - **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
