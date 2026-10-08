@@ -9,11 +9,30 @@ One small model does three jobs:
 2. at stop, it **converts the notes into a prose summary** that keeps their citations;
 3. it **titles the meeting** from the notes.
 
-**Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B**, distilled from Qwen3.8-27B, on the CPU only. The current build, **mobile-v1**, runs on LiteRT-LM within a 3 GB RAM budget. Earlier versions (v3–v11) are llama.cpp Q4_0 GGUFs.
+**Target device:** OPPO Reno7 (Dimensity 900, 8 GB), CPU only, within a 3 GB RAM budget. The student is distilled from Qwen3.8-27B.
 
-**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (`.litertlm` for LiteRT-LM, Q4_0 GGUFs, LoRA adapters, system prompt). Also [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT) (more faithful, 2.65 GB peak on the Reno7) and [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT), a **smoke-test model**: same protocol and note format, 290 MB int8 with quantization-aware training, much faster, but 58 % of its notes are contradicted (coverage 0.64), so use it only to test an app pipeline end to end. **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
+## Status (October 2026)
 
-## Results
+| model | runtime | minutes contradicted (IVOD 38) | coverage | Reno7 peak RSS, 4k | prefill / decode | use |
+|---|---|---|---|---|---|---|
+| **Gemma-4-E4B mobile-v1** | forked engine, CPU | **11 %** | **0.94** | 2.65 GB | 43 / ~4 tok/s | most faithful; if ASR fits next to it |
+| **Gemma-4-E2B mobile-v1** | forked engine, CPU | 17 % | 0.92 | **1.08 GB** | 118 / ~9 tok/s | most room for ASR and diarization |
+| Gemma-4-E2B mobile-v1 | stock LiteRT-LM, CPU | 17 % | 0.92 | 2.28 GB | 118 / ~10 tok/s | fallback when the CPU lacks `dotprod` |
+| Gemma-3-270M | stock LiteRT-LM, CPU, int8 QAT | 58 % (13 sessions) | 0.64 | — | much faster | **smoke test only** |
+| Gemma-4-E2B v3–v11 | llama.cpp Q4_0 GGUF | 17–18 % | 0.89–0.94 | — | 8 / 4–7 tok/s | earlier builds |
+
+- **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
+- **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
+- **In progress:** a ~1B student (K2-Horizon-0.9B, Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT and on-policy DPO. It now matches E2B on faithfulness (16 % of minutes contradicted on IVOD 38, coverage 0.90). Exports to LiteRT-LM (int4 QAT, CPU), a LiteRT-LM GPU format and an Apple-silicon (Metal) build are next. Not yet published.
+
+**Weights:**
+- [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): `.litertlm` and the forked-engine files (`mfa/`).
+- [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): `mobile-v1/` (`.litertlm` and `mfa/`), Q4_0 GGUFs v3–v11, LoRA adapters, system prompt.
+- [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT): a **smoke-test model** speaking the same protocol and note format (290 MB, int8 with quantization-aware training). Too inaccurate for real use; it exists to exercise an app pipeline end to end in seconds.
+
+**Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel; §13 for the forked engine).
+
+## First results (v3, llama.cpp)
 
 On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eval/judge_prose_tx.py`: each cited statement is checked from 30 s before its citation to 150 s after):
 
@@ -26,7 +45,7 @@ On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eva
 
 The deployed configuration restarts from the compacted journal at 8k tokens, as on the phone. Against a 32k budget it loses nothing: 18 % contradicted in both cases, coverage 0.92 against 0.91, and decisions recalled 83 % against 77 %. The compacted journal puts decisions, open issues and actions back at the head of the context at each restart.
 
-**Live on a Reno7.** A 2 h 08 meeting was replayed at real speed:
+**Live on a Reno7 (v3, llama.cpp).** A 2 h 08 meeting was replayed at real speed:
 
 | | |
 |---|---|
@@ -35,7 +54,7 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
 
-## mobile-v1 (latest): LiteRT-LM, on the phone's CPU, within 3 GB
+## mobile-v1: LiteRT-LM, on the phone's CPU, within 3 GB
 
 mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), inside Google's own Gemma-4-E2B **mobile** graph: int2 MLP in layers 15–34, int4 elsewhere, an int8 KV cache and int8 static-range activations. It is built in three steps:
 1. **Fine-tune on Google's mobile weights.** A LoRA trained on those weights distils v11: v11's top-32 next-token distributions plus the gold (`distill/kd_teacher_logits.py`, `distill/sft_mobile_qat.py --kd`).
@@ -49,6 +68,8 @@ mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteR
 | peak RSS | — | **2.28 GB** |
 | minutes contradicted (IVOD 38) | 17 % | 17 % |
 | 決議事項 really decided | 71 % | 75 % |
+
+**E4B mobile-v1** is built the same way on Google's Gemma-4-E4B mobile graph: 11 % of minutes contradicted, coverage 0.94, 待辦 really assigned 76 %, prose contradicting the notes 8 %, title 4.29. On stock LiteRT-LM it peaks at 4.58 GB; the forked engine brings it to 2.65 GB.
 
 **Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12–§13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 
@@ -238,13 +259,10 @@ Data (transcripts, gold minutes, runs) is not included. The weights are on Huggi
 
 ## Next
 
-- **Titles on parliament meetings:** a pairwise reward against the teacher's title, which varies more within a group than a 1–5 score.
-- **Quantization loss:** the same merged model in f16 and in Q4_0 on the three tasks (`scripts/quant_check.sh`). If the gap is large, train the LoRA quantization-aware.
-
-- **Faithfulness:** a larger student that still keeps pace on the phone (Gemma-4-E4B, not yet measured), or human review of decisions and key figures.
+- **K2-Horizon-0.9B:** finish the DPO rounds, then export (LiteRT-LM int4 QAT for CPU; the GPU format with the best memory/quality trade-off; an Apple-silicon build for Metal) and measure on the phone.
 - **On the device:**
-  - repack on or off on a `dotprod` CPU. A Raspberry Pi 4 (A72, 4 GB) cannot tell: it has no `dotprod`, so llama.cpp never repacks Q4_0 there. It does show that the model runs on 4 GB, in mmap under a memory cap, with about 2–2.8 GB resident (nearly all file-backed pages), at prefill 5 tok/s and decode 2.2 tok/s;
-  - ASR on the same CPU;
-  - judged quality of the notes produced on the phone;
-  - prefill of the restart context on a second slot;
-  - the Kotlin port.
+  - ASR, diarization and E4B together on the Reno7, within the memory budget;
+  - an in-process engine (JNI) for VoxSumDroid instead of a separate binary;
+  - judged quality of the notes produced on the phone.
+- **Faithfulness:** the remaining errors are mostly binding (the right fact on the wrong year, article or body), which falls only with much larger models (2.4 % for the 27B teacher); human review of decisions and key figures remains advisable.
+- **Titles on parliament meetings:** a pairwise reward against the teacher's title.
