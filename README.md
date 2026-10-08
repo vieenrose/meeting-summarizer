@@ -11,7 +11,7 @@ One small model does three jobs:
 
 **Target device:** OPPO Reno7 (Dimensity 900, 8 GB). It runs **Gemma-4-E2B**, distilled from Qwen3.8-27B, on the CPU only. The current build, **mobile-v1**, runs on LiteRT-LM within a 3 GB RAM budget. Earlier versions (v3–v11) are llama.cpp Q4_0 GGUFs.
 
-**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (`.litertlm` for LiteRT-LM, Q4_0 GGUFs, LoRA adapters, system prompt). **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
+**Weights:** [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF) (`.litertlm` for LiteRT-LM, Q4_0 GGUFs, LoRA adapters, system prompt). Also [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT) (more faithful, 2.65 GB peak on the Reno7) and [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT), a **smoke-test model**: same protocol and note format, 290 MB int8 with quantization-aware training, much faster, but 58 % of its notes are contradicted (coverage 0.64), so use it only to test an app pipeline end to end. **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel).
 
 ## Results
 
