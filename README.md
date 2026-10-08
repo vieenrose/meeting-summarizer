@@ -17,11 +17,12 @@ One small model does three jobs:
 |---|---|---|---|---|---|---|
 | **Gemma-4-E4B mobile-v1** | forked engine, CPU | **11 %** | **0.94** | 2.65 GB | 43 / ~4 tok/s | most faithful; if ASR fits next to it |
 | **Gemma-4-E2B mobile-v1** | forked engine, CPU | 17 % | 0.92 | **1.08 GB** | 118 / ~9 tok/s | most room for ASR and diarization |
+| K2-Horizon-0.9B (zh-TW) | stock LiteRT-LM, CPU, int4 QAT | 21 % (13 sessions) | 0.97 | not measured yet | not measured yet | 619 MB file; on par with E2B in earlier tests; 38-session check pending |
 | Gemma-3-270M | stock LiteRT-LM, CPU, int8 QAT | 58 % (13 sessions) | 0.64 | — | much faster | **smoke test only** |
 
 - **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 - **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
-- **In progress:** a ~1B student (K2-Horizon-0.9B, Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT and on-policy DPO. It now matches E2B on faithfulness (16 % of minutes contradicted on IVOD 38, coverage 0.90). Exports to LiteRT-LM (int4 QAT, CPU), a LiteRT-LM GPU format and an Apple-silicon (Metal) build are next. Not yet published.
+- **K2-Horizon-0.9B:** a ~1B student (Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT and on-policy DPO. In GGUF Q8_0 it matches E2B on faithfulness (16 % of minutes contradicted on IVOD 38, coverage 0.90). The LiteRT-LM int4 file with quantization-aware training (619 MB, `distill/export_k2_litert.py`) scores 21 % contradicted and coverage 0.97 on 13 sessions (±4 points), i.e. no visible loss from 4-bit. Q4 GGUFs (646–677 MB) and a 4-bit MLX build for Apple silicon are built but not yet evaluated; a GPU format is next. Weights not yet published.
 
 **Weights:**
 - [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): `.litertlm` and the forked-engine files (`mfa/`).
@@ -257,7 +258,7 @@ Data (transcripts, gold minutes, runs) is not included. The weights are on Huggi
 
 ## Next
 
-- **K2-Horizon-0.9B:** finish the DPO rounds, then export (LiteRT-LM int4 QAT for CPU; the GPU format with the best memory/quality trade-off; an Apple-silicon build for Metal) and measure on the phone.
+- **K2-Horizon-0.9B:** evaluate the int4 QAT file on 38 sessions, pick the GPU format with the best memory/quality trade-off, evaluate the Apple-silicon builds (Metal GGUF, MLX), and measure on the phone.
 - **On the device:**
   - ASR, diarization and E4B together on the Reno7, within the memory budget;
   - an in-process engine (JNI) for VoxSumDroid instead of a separate binary;
