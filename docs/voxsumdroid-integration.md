@@ -1,6 +1,6 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 2.7 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
+**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 2.7 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. **A third, smaller model is available as an option: K2-Horizon-0.9B (§14).** It is a live reader only, on the stock LiteRT-LM runtime, and it contradicts the transcript more often (about 21 % of statements, against 16 % for E2B and 11 % for E4B on the same 13-session set of §14.5; the 11 % and 17 % above are IVOD-38 figures). The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
 
 One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
@@ -281,6 +281,7 @@ About one statement in five is contradicted by the transcript. The errors are mo
 ## 8. Licences and data
 
 - The model is Apache-2.0, like its Gemma-4 base, and compatible with VoxSumDroid's GPL-3.0. It is downloaded at runtime like the other models: pin it in `ModelManager` with the revision and sha256 from §1.
+- K2-Horizon-0.9B (§14) is Apache-2.0 as well (base model [`IFM/K2-Horizon-0.9B`](https://huggingface.co/IFM/K2-Horizon-0.9B)); pin it in `ModelManager` in the same way.
 - The model was trained on Legislative Yuan (IVOD) transcripts. No data ships with it. The source recordings are under the IVOD terms of use.
 
 ## 9. Moving from v3 to v5
@@ -632,3 +633,103 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDRO
 - **Still to measure:**
   - with ASR and diarization resident;
   - heat over a full meeting;
+
+## 14. K2-Horizon-0.9B: a third, smaller model (live reader only)
+
+[`Luigi/K2-Horizon-0.9B-meeting-agent-zh-LiteRT`](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh-LiteRT) is [IFM's K2-Horizon-0.9B](https://huggingface.co/IFM/K2-Horizon-0.9B) (Llama architecture, 0.9 B parameters), adapted to zh-TW and fine-tuned as the same reading agent: same system prompt, same `NOTE [time] (TYPE) text` lines, same journal. Add it as a **third entry next to E2B and E4B**, not as a replacement:
+
+- **Its case is the runtime and the size, not the quality.** The file is 0.62 GB and runs on **stock LiteRT-LM**, with no custom native engine. The forked engine of §13 does not apply: it rewrites Gemma's attention graph, and K2 is a different graph.
+- **It is a reader only.** It was trained on reading turns, not on the title and prose prompts of §4.6 and §4.7, and those were never evaluated for it. Do not ask it for either (§14.4).
+- **It contradicts the transcript more than E2B and E4B** (§14.5). Keep E2B or E4B as the default and offer K2 as the light option.
+
+### 14.1 The file
+
+| | |
+|---|---|
+| file | `k2-horizon-0.9b-meeting-agent-zh-q4.litertlm`, 618,668,144 bytes, sha256 `44247c846405209b947a2de99b3898ca966e7c25c8ecc5c2f75cdfa70a228fcc`, HF revision `321022a9b1052dc8adb029f78c5bea1dbf6cf51f` |
+| weights | int4 block-32 with quantization-aware training on that grid, KV cache 4,096 |
+| runtime | `com.google.ai.edge.litertlm:litertlm-android:0.17.1` (the version of §12), **CPU** |
+| system prompt | `system_prompt.txt` in the same repo; use it verbatim. It is the same text as the E2B and E4B prompt |
+| not for use | `k2-horizon-0.9b-meeting-agent-zh-q8.litertlm` (int8, no QAT) was smoke-tested only |
+
+Settings, as in §12.2: `Backend.CPU(threadCount = 8)`, `maxNumTokens = 4096`, `cacheDir` = the app's cache dir, `visionBackend = null`, `audioBackend = null`, no speculative decoding (there is no drafter in this file). Sampler: `temperature = 0.2`, `seed = 0`; the `topK`/`topP` of §12.2 were not tuned for this model.
+
+### 14.2 What differs from the Gemma models
+
+| | E2B / E4B (§4, §12) | K2-Horizon-0.9B |
+|---|---|---|
+| chat template | `<\|turn>role\n…<turn\|>\n` | `<\|ifm\|im_start\|>role\n…<\|ifm\|im_end\|>`, **no newline between turns** |
+| `<bos>` | added by the engine | **none**: do not write one |
+| tokenizer | Gemma-4 SentencePiece | Llama-style BPE, 64k vocabulary plus 5,000 zh-TW merges |
+| characters per token (zh-TW transcripts) | 1.63 | **1.61** |
+| reply ends at | `<turn\|>` | `<\|ifm\|im_end\|>` |
+| title, prose | fine-tuned (§4.6, §4.7) | **not trained, not evaluated** |
+| engine | stock LiteRT-LM or the fork (§13) | **stock LiteRT-LM only** |
+
+The prompt of a reading window, as raw text (`{SYSTEM}` is `system_prompt.txt`; `{journal}` is `## 筆記本（至今）\n…` compacted to ≤ 1,200 tokens as in §4.4, or `（尚無筆記）`):
+
+```
+<|ifm|im_start|>system
+{SYSTEM}<|ifm|im_end|><|ifm|im_start|>user
+{journal}<|ifm|im_end|><|ifm|im_start|>assistant
+NEXT<|ifm|im_end|><|ifm|im_start|>user
+## 逐字稿片段 {k}
+{transcript lines}<|ifm|im_end|><|ifm|im_start|>assistant
+```
+
+The model answers with at most 5 lines `NOTE [time] (TYPE) text`, then `NEXT`. The parsing, the guards of §4.8 and the minutes grouping of §4.5 are unchanged.
+
+### 14.3 Integrating into VoxSumDroid
+
+Reuse `LiveReader` (§5) and the per-window sessions of §12.3. Only the prompt text changes, so put it behind one interface and select it from the model entry in `ModelManager`:
+
+```kotlin
+interface PromptTemplate {
+    fun windowHeader(system: String, journal: String, k: Int): String   // up to the first transcript line
+    fun windowFooter(): String                                           // closes the user turn, opens the reply
+    val charsPerToken: Double
+}
+object K2Template : PromptTemplate {
+    private const val S = "<|ifm|im_start|>"; private const val E = "<|ifm|im_end|>"
+    override fun windowHeader(system: String, journal: String, k: Int) =
+        "${S}system\n$system$E${S}user\n$journal$E${S}assistant\nNEXT$E${S}user\n## 逐字稿片段 $k\n"
+    override fun windowFooter() = "$E${S}assistant\n"
+    override val charsPerToken = 1.61
+}
+```
+
+- **One fresh session per window**, `runPrefill` for the header, then each transcript segment as it arrives (≥ ~500 characters per call), then the footer, then `runDecode()`. Close a window at **1,500 tokens** of transcript lines, estimated with `charsPerToken`; the evaluation below counted exact K2 tokens, so expect small differences in window boundaries.
+- **Stop the reply yourself.** Cancel with `session.cancelProcess()` once the reply holds `\nNEXT` or about 650 characters (400 tokens), as in §12.3. The evaluation harness did the same, through a proxy.
+- **Parity test before shipping (do it first).** The evaluation ran through `litert-lm serve` on the host, which applies the file's own chat template. We did **not** check on a phone that `runPrefill` turns `<|ifm|im_start|>` and `<|ifm|im_end|>` into the special-token ids. Run the Kotlin reader and `litert-lm serve` on the same prompts: the token sequences must match. If the special tokens come out as plain text, the notes will be wrong and you will see it at once.
+- **Gate by RAM and by measurement** (§14.6), like the other models.
+
+### 14.4 Title and prose
+
+Neither the title (§4.6) nor the prose summary (§4.7) was trained or measured for K2. Two options:
+
+1. **Hand the compacted journal to E2B or E4B at stop** (§12.3: at most 3,900 characters of notes), loading that model once the reader is done. This keeps the quality of §12.4 for both outputs and costs a model load after the meeting.
+2. **Offer neither** in K2 mode: show the notes and the minutes only.
+
+Do not prompt K2 for titles: it was never given those prompts, so the result is unknown.
+
+### 14.5 Quality
+
+Held-out zh-TW sessions transcribed by ASR, the per-window protocol at 4k context, the same Gemma-4-31B judge, **13 sessions (about ±4 points)**. K2 was run through LiteRT-LM on the host.
+
+| | **K2-0.9B int4 QAT** | E2B | E4B |
+|---|---|---|---|
+| statements contradicted by the transcript | **21 %** | 16 % | 11 % |
+| statements unsupported | 4 % | 6 % | 4 % |
+| coverage of the reference key points | 0.97 | 0.87 | 0.93 |
+
+On the K2 run, 90 % of the 決議事項 items and 92 % of the 待辦 items were judged correct (97 and 90 items).
+
+- **A larger sample is pending.** The same weights as a llama.cpp Q8_0, before QAT and export, scored 16 % contradicted, 2 % unsupported, coverage 0.90 and decision recall 73 % on 38 sessions (±2 points). A LiteRT run on the 38 sessions stopped after 11 (the server died): 23 % contradicted, 7 % unsupported, coverage 0.92. Plan for **20 to 25 %** of statements contradicted, and word the UI as §7 does.
+
+### 14.6 Memory and speed: not measured on the Reno7
+
+This is the one gap to close before shipping. What is known: the file is 0.62 GB. What is not known: peak RSS on the stock CPU path, first run (cache build) and warm, prefill and decode speed, and the cost with ASR and diarization resident. §12.5 shows why the weights alone do not predict it: on stock LiteRT-LM the CPU path allocates attention workspaces that grow with the context squared, and that is most of E2B's 2.28 GB. Measure it as §12.5 does (`dumpsys meminfo` TOTAL RSS every 3 s plus `VmHWM`, a 2.9k-token reading prompt, `maxNumTokens = 4096`, nothing else running), then set the RAM gate from the result.
+
+### 14.7 How it was built
+
+Details are in the [model card](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh-LiteRT): +5,000 zh-TW BPE merges and continued pretraining on zh-TW text and meeting transcripts with general replay; agent fine-tuning on the reading turns, masking the turns that held a contradicted or unsupported note; on-policy DPO on pairs that fix contradicted notes; quantization-aware training on the int4 block-32 grid, self-distilled from the float copy; export with `litert_torch` `dynamic_int4_block32`. No training data is included.
