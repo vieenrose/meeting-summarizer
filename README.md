@@ -17,16 +17,20 @@ One small model does three jobs:
 |---|---|---|---|---|---|---|
 | **Gemma-4-E4B mobile-v1** | forked engine, CPU | **11 %** | **0.94** | 2.65 GB | 43 / ~4 tok/s | most faithful; if ASR fits next to it |
 | **Gemma-4-E2B mobile-v1** | forked engine, CPU | 17 % | 0.92 | **1.08 GB** | 118 / ~9 tok/s | most room for ASR and diarization |
-| K2-Horizon-0.9B (zh-TW) | stock LiteRT-LM, CPU, int4 QAT | 21 % (13 sessions) | 0.97 | not measured yet | not measured yet | 619 MB file; on par with E2B in earlier tests; 38-session check pending |
+| **K2-Horizon-0.9B (zh-TW), r16n** | llama.cpp, GGUF Q8_0 (1.17 GB) | 10–13 % (2 runs) | 0.89–0.92 | not measured yet | not measured yet | smallest model on par with E2B or better: unsupported 1–3 %, title 4.15, prose 88 % supported |
+| K2-Horizon-0.9B (zh-TW), earlier | stock LiteRT-LM, CPU, int4 QAT | 23 % (38 sessions) | 0.92 | not measured yet | not measured yet | 619 MB file; float weights (GGUF Q8_0) 16 %, so int4 costs ~7 points |
 | Gemma-3-270M | stock LiteRT-LM, CPU, int8 QAT | 58 % (13 sessions) | 0.64 | — | much faster | **smoke test only** |
 
 - **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 - **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
-- **K2-Horizon-0.9B:** a ~1B student (Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT and on-policy DPO. In GGUF Q8_0 it matches E2B on faithfulness (16 % of minutes contradicted on IVOD 38, coverage 0.90). The LiteRT-LM int4 file with quantization-aware training (619 MB, `distill/export_k2_litert.py`) scores 21 % contradicted and coverage 0.97 on 13 sessions (±4 points), i.e. no visible loss from 4-bit. Q4 GGUFs (646–677 MB) and a 4-bit MLX build for Apple silicon are built but not yet evaluated; a GPU format is next. Weights not yet published.
+- **K2-Horizon-0.9B:** a ~1B student (Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT, then rounds of on-policy DPO (full fine-tuning; pairs sampled from the current model and ranked by the judge against the transcript): contradicted-note fixes (≈ 2,200 pairs, the biggest single gain), speaker-binding swaps, prose, titles, and finally missed-key-point "replace" pairs (the nearest wrongly stated note replaced by the correct one, the only data that moved coverage). Conservative DPO (label smoothing 0.1) on the judge-ranked rounds. The released checkpoint (r16n, GGUF Q8_0) has 10–13 % of minutes contradicted, 1–3 % unsupported, coverage 0.92 / 0.89 on two runs of IVOD 38, title 4.15 and prose 88 % supported, against 17 % / 5 % / 0.92 / 4.05 / 86.6 % for E2B (E2B measured on its mobile runtime). Quantization matters: on an earlier checkpoint the LiteRT-LM int4 QAT file (619 MB, `distill/export_k2_litert.py`) scored 23 % contradicted against 16 % for Q8_0, so keep 8-bit. A 4-bit MLX build for Apple silicon exists but is not evaluated.
 
 **Weights:**
 - [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): `.litertlm` and the forked-engine files (`mfa/`).
 - [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): `mobile-v1/` (`.litertlm` and `mfa/`), Q4_0 GGUFs v3–v11, LoRA adapters, system prompt.
+- [Luigi/K2-Horizon-0.9B-meeting-agent-zh](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh): the released K2 checkpoint as fp32 safetensors for further fine-tuning (transformers), with the extended tokenizer, chat template and prompts.
+- [Luigi/K2-Horizon-0.9B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh-GGUF): the same weights as GGUF Q8_0 for llama.cpp (the file evaluated above).
+- [Luigi/K2-Horizon-0.9B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh-LiteRT): an earlier K2 checkpoint as `.litertlm` (int4 QAT, int8).
 - [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT): a **smoke-test model** speaking the same protocol and note format (290 MB, int8 with quantization-aware training). Too inaccurate for real use; it exists to exercise an app pipeline end to end in seconds.
 
 **Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel; §13 for the forked engine).
@@ -198,6 +202,20 @@ flowchart LR
 
    The remaining errors are mostly relational: the right figure attached to the wrong year, scope or body.
 
+## Data preparation
+
+All training data is built from noisy ASR transcripts of long meetings in Traditional Chinese (parliament committee sessions and a corpus of office meetings), never from clean text, so the model learns to read what it will actually receive.
+
+1. **Transcripts.** Sessions are transcribed with ASR; a session whose transcript fails the quality gates (`distill/v2_gates.py`: language, repetition loops, length, ASR artefacts) is dropped or re-transcribed. Held-out evaluation sessions are chosen first and never enter any training set.
+2. **Windows.** Each transcript is cut into windows of about 4k tokens (`summarizer/ingest.py`), the unit the deployed agent reads.
+3. **Gold notes (map).** A teacher model writes timestamped notes for each window, every note anchored to a real transcript line. Citations that do not resolve to a line are rejected.
+4. **Gold summaries (reduce).** From all the notes of a meeting the teacher writes a numbered cited synthesis and a 280–560 character prose abstract. The prose gate requires at least 6 valid citations, coverage of the beginning, middle and end, and no Simplified characters (`distill/write_prose.py`).
+5. **Verification.** A second model proposes defects; every proposed fix is checked against the transcript before it is applied, and QA rounds stop when one produces no confirmed fix. The gold stays faithful to the noisy transcript: ASR garbles the speaker really said are kept, never normalised to real-world truth. A value is accepted only if it appears at its own timestamp, not elsewhere in the window.
+6. **SFT rows.** The notes, synthesis and prose become chat-format rows (`distill/export_training.py`, `distill/build_agent_sft.py`). Turns whose notes the judge found contradicted are kept as context but carry no loss.
+7. **Preference pairs (on-policy DPO).** The student reads training sessions with the deployed harness. The judge flags contradicted or unsupported notes (`eval/judge_prose_tx.py`), the teacher rewrites each from the transcript, and a rewrite is kept only if it is judged supported. `rejected` is the student's own reply and `chosen` the same reply with the notes replaced (`distill/build_dpo_pairs.py`); pairs whose notes were only dropped get a lower weight, since pure deletion teaches omission.
+
+The training sets are not published. The transcripts come from sources whose licences are non-commercial or unclear for redistribution, and the sets quote them; only code, prompts and weights are released.
+
 ## Run
 
 On the phone, with the upstream llama.cpp Android build:
@@ -254,11 +272,11 @@ The merge converts through f16, not bf16: the one tensor that stays unquantized 
 | `eval/incremental_prefill_test.py`, `eval/number_check.py` | per-model incremental-prefill check; number check (no gain) |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
 
-Data (transcripts, gold minutes, runs) is not included. The weights are on Hugging Face (link above).
+Data (transcripts, gold minutes, preference pairs, runs) is not included: see *Data preparation* for how it is built and why it is not released. The weights are on Hugging Face (link above).
 
 ## Next
 
-- **K2-Horizon-0.9B:** evaluate the int4 QAT file on 38 sessions, pick the GPU format with the best memory/quality trade-off, evaluate the Apple-silicon builds (Metal GGUF, MLX), and measure on the phone.
+- **K2-Horizon-0.9B:** close the int4 gap (int8 file, mixed precision), pick the GPU format with the best memory/quality trade-off, evaluate the Apple-silicon builds (Metal GGUF, MLX), and measure on the phone.
 - **On the device:**
   - ASR, diarization and E4B together on the Reno7, within the memory budget;
   - an in-process engine (JNI) for VoxSumDroid instead of a separate binary;
