@@ -640,16 +640,17 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDRO
 
 - **Quality on par with E2B or better** (§14.4).
 - **Runtime: llama.cpp**, through the existing `llm_jni.cpp` path (§3). The forked LiteRT engine of §13 does not apply (it rewrites Gemma's attention graph), and no LiteRT-LM file of this checkpoint exists.
-- **Use 8-bit.** On an earlier checkpoint, int4 cost about 7 points of contradiction.
+- **Use 8-bit.** The int4 QAT file of the same repo contradicts the transcript in about 19 % of notes against about 16 % for Q8_0; plain int4 (e.g. a self-made Q4_K_M) cost about 7 points on an earlier checkpoint.
+- **Re-download if you fetched it before 2026-10-12** (§14.7): the first upload embedded the wrong chat template.
 
 ### 14.1 The file
 
 | | |
 |---|---|
-| file | `k2-horizon-0.9b-meeting-agent-zh-q8_0.gguf`, 1,165,349,760 bytes, sha256 `9e178d58d2224632020ad13e49d6bcfd0462733f3be5cb2754e716915524991c` |
+| file | `k2-horizon-0.9b-meeting-agent-zh-q8_0.gguf`, 1,165,297,632 bytes, sha256 `fa5d33e875fd55d5bd58510983cc80de1ea5b8aad5360ddc0433c743095f93d1` (2026-10-12) |
 | runtime | llama.cpp, CPU, `n_ctx` 4096 |
 | prompts | `system_prompt.txt` (same text as the E2B and E4B prompt), `title_prompt.txt`, `prose_prompt.txt` in the same repo; use them verbatim |
-| template | `chat_template.jinja` in the same repo |
+| template | `chat_template.jinja` in the same repo, also embedded in the GGUF since 2026-10-12 (§14.7) |
 | fine-tunable weights | [`Luigi/K2-Horizon-0.9B-meeting-agent-zh`](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh) (fp32 safetensors) |
 
 Sampler: `temperature = 0.2`, `seed = 0`.
@@ -723,3 +724,20 @@ This is the one gap to close before shipping. The file is 1.17 GB; peak RSS, pre
 ### 14.6 How it was built
 
 Details are in the [model card](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh): +5,000 zh-TW BPE merges and continued pretraining on zh-TW text and meeting transcripts with general replay; agent SFT on reading turns; then rounds of on-policy DPO (full fine-tuning, pairs sampled from the current model and ranked by the judge against the transcript): contradicted-note fixes, speaker-binding swaps, prose, titles, and missed-key-point "replace" pairs, with conservative DPO (label smoothing 0.1). No training data is included.
+
+### 14.7 Fix of 2026-10-12: the embedded chat template
+
+**Symptom.** With the GGUF's own template (`llama-server --jinja`, no template file), the model first writes reasoning, `--reasoning-budget 0` does not stop it, and the notes are cut short by the 400-token cap.
+
+**Cause.** The first upload embedded the base IFM chat template, which opens a thinking block. K2 was fine-tuned without one (§14.2), so the reasoning is out of distribution. The weights were never at fault, and the measurements of §14.4 used the training template explicitly.
+
+**Fix.** Both GGUF files now embed the training template; the weights are unchanged.
+
+| file | bytes | sha256 |
+|---|---|---|
+| `k2-horizon-0.9b-meeting-agent-zh-q8_0.gguf` | 1,165,297,632 | `fa5d33e875fd55d5bd58510983cc80de1ea5b8aad5360ddc0433c743095f93d1` |
+| `k2-horizon-0.9b-meeting-agent-zh-q4_0-qat.gguf` | 645,880,064 | `82b59d00abf2693474f772e4c5f9bc79aa9c80d2575fb0f73a354afa91b63f5c` |
+
+Re-download both, or keep an old file and pass `--chat-template-file chat_template.jinja --skip-chat-parsing`. VoxSumDroid builds the prompt text itself (§14.3) and is not affected when it does so.
+
+**Using the model outside the protocol.** It was trained for the reading turn (`NOTE [time] (TYPE) text` lines, then `NEXT`), a title and a cited prose, with the prompts of the repo used verbatim. Other requests, such as filling a table, are out of distribution: expect English words, wrong columns and invented details. Invented details inside the protocol, such as a deadline absent from the transcript, belong to the 10–16 % contradiction rate of §14.4; that rate is the main work item. A fair comparison with E2B needs the same transcripts, the same prompts and a judge against the transcript, as §14.4 does.
