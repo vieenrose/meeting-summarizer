@@ -1,192 +1,137 @@
 # meeting-summarizer
 
-Minutes of a long meeting, written **live, on the phone**, while the meeting is going on.
+On-device meeting minutes for long zh-TW meetings, written **live on the phone** while the meeting is going on.
 
-The input is a zh-TW meeting of 1.5–4 h, transcribed by on-device ASR. The output is structured minutes. Every item cites the transcript line it rests on.
+- **Input:** a 1.5–4 h meeting, transcribed by on-device ASR.
+- **Output:** structured minutes (決議 · 待辦 · 保留 · 重要數字), a short prose summary and a title. Every item cites the transcript line it rests on.
+- **Target:** OPPO Reno7 (Dimensity 900, 8 GB), CPU only, within a 3 GB RAM budget.
+- **Model:** Gemma-4-E2B or E4B, fine-tuned and run in Google's mobile LiteRT-LM graph.
 
-One small model does three jobs:
-1. it **reads the meeting live** and writes typed, cited notes; the minutes are those notes grouped by type;
-2. at stop, it **converts the notes into a prose summary** that keeps their citations;
-3. it **titles the meeting** from the notes.
+## Models
 
-**Target device:** OPPO Reno7 (Dimensity 900, 8 GB), CPU only, within a 3 GB RAM budget. The student is distilled from Qwen3.8-27B.
+Current release: **mobile-v2** (2026-10-17).
 
-## Status (October 2026): mobile-v2
+| | E4B mobile-v2 | E2B mobile-v2 |
+|---|---|---|
+| notes contradicted by the transcript | **8–12 %** | 14–19 % |
+| coverage of the reference points | 0.76–0.97 | 0.74–0.98 |
+| peak RAM on the Reno7 (4k context) | 2.65 GB | **1.08 GB** |
+| prefill / decode | 43 / ~4 tok/s | **118 / ~9 tok/s** |
+| choose it when | faithfulness matters most | ASR and diarization need the memory |
 
-| model | runtime | notes contradicted: financial TV / Legislative Yuan / AliMeeting | coverage: same three | Reno7 peak RSS, 4k | prefill / decode | use |
-|---|---|---|---|---|---|---|
-| **Gemma-4-E4B mobile-v2** | forked engine, CPU | **11.7 / 9.6 / 8.0 %** | **0.76 / 0.97 / 0.91** | 2.65 GB | 43 / ~4 tok/s | most faithful; if ASR fits next to it |
-| **Gemma-4-E2B mobile-v2** | forked engine, CPU | 19.1 / 14.5 / 13.7 % | 0.74 / 0.98 / 0.88 | **1.08 GB** | 118 / ~9 tok/s | most room for ASR and diarization |
+Ranges are over three held-out domains; see [Evaluation](#evaluation).
 
-Measured on 43 held-out meetings (10 financial TV programs, 13 Legislative Yuan committee meetings, 20 AliMeeting business meetings), judged by Gemma-4-31B against the transcript. mobile-v2 is a drop-in update of mobile-v1 trained with on-policy distillation from Gemma-4-31B: same engine, files, memory and speed. Against mobile-v1, **E4B** contradicts the transcript significantly less often and **E2B**'s gain is within noise; both lose about 5 points of coverage on AliMeeting. Details: [mobile-v2](#mobile-v2-on-policy-distillation-2026-10-17), [integration note §15](docs/voxsumdroid-integration.md#15-mobile-v2-2026-10-17-new-weights-for-e2b-and-e4b). Earlier versions and their IVOD 38 results: [appendix](#appendix-previous-versions).
+| weights | contents |
+|---|---|
+| [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT) | `mobile-v2/`: `.litertlm`, fused graph (`mfa/`), system prompt, LoRA, merged safetensors |
+| [Luigi/gemma-4-E2B-meeting-agent-zh](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh) | the same for E2B; older releases (`mobile-v1/`, Q4_0 GGUFs) |
+| [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT) | smoke-test model (290 MB): same protocol, too inaccurate for real use |
 
-- **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
-- **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
+## Using it in an app
 
-**Weights:**
-- [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): mobile-v1 at the root, **`mobile-v2/`** (`.litertlm`, `mfa/`, system prompt, LoRA and merged safetensors checkpoint).
-- [Luigi/gemma-4-E2B-meeting-agent-zh](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh): **`mobile-v2/`** (`.litertlm`, `mfa/`, system prompt, LoRA and merged safetensors checkpoint), `mobile-v1/` (`.litertlm` and `mfa/`), Q4_0 GGUFs v3–v11, LoRA adapters, system prompt.
-- [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT): a **smoke-test model** speaking the same protocol and note format (290 MB, int8 with quantization-aware training). Too inaccurate for real use; it exists to exercise an app pipeline end to end in seconds.
+Follow the [integration note](docs/voxsumdroid-integration.md). It covers running ASR, diarization and summarization in parallel, the prompts, and file revisions. §15 is the mobile-v2 checklist.
 
-**Integrating into an app:** [docs/voxsumdroid-integration.md](docs/voxsumdroid-integration.md) (ASR, diarization and summarization in parallel; §13 for the forked engine).
+- **Engine:** the [forked LiteRT-LM engine](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention) fuses each attention block into one int8 op. It produces the same tokens as stock LiteRT-LM with half the memory (E4B: 2.65 GB instead of 4.58 GB).
+- **Context:** use 4k. 8k costs 10–20 % of the speed for little gain.
+- **CPU, not GPU:** the Reno7's Mali GPU needs fp32 activations, and is then slower than the CPU.
 
-## mobile-v2: on-policy distillation (2026-10-17)
+## How it works
 
-mobile-v2 continues mobile-v1 in two stages:
-1. **SFT** on reading rows plus dense-list conversion rows, adding Taiwanese financial TV programs as a third domain.
-2. **One round of on-policy distillation.** The student reads 30 training meetings with the deployed harness. Gemma-4-31B scores the student's own rollouts with its top-20 next-token distributions, and the student is trained on those distributions (`distill/sft_mobile_qat.py --kd`).
+```mermaid
+flowchart LR
+    A[live ASR] -->|20 s segments| P[incremental prefill]
+    P --> W[window closes]
+    W --> R{{reading turn<br/>≤ 8 cited notes}}
+    R --> J[(journal)]
+    J -->|context full| X[restart from<br/>compacted journal]
+    X --> P
+    J --> M[minutes = notes grouped by type]
+    J --> S[at stop: summary and title]
+```
 
-The export is unchanged ([mobile-v1](#mobile-v1-litert-lm-on-the-phones-cpu-within-3-gb)): GPTQ, then injection, then attention fusion. A second round of on-policy distillation gave nothing more.
+- **One growing conversation.** ASR segments are prefilled as people talk, so when a window closes only the notes remain to generate.
+- **Short context.** Prefill on a phone CPU slows down with depth. When the context is full, the conversation restarts from a compacted journal: decisions, open issues and actions first, then recent notes.
+- **The minutes are the notes.** Small models merge and invent when they rewrite. The minutes are the notes grouped by type (`DECISION`, `ACTION`, `OPEN-ISSUE`, `NUMBER`).
+- **At stop**, the same model turns the notes into a cited summary and a title.
+- **Prompt rules that matter for a small model:**
+  - short notes;
+  - no ASR speaker labels, because they are unreliable;
+  - no body or person that the excerpt does not name.
+- **Guards:** the output length is capped, near-duplicate notes are rejected, and every citation must resolve to a transcript line.
 
-The comparison against mobile-v1 uses the forked engine (CPU, 4k) and the same judge, on 43 held-out meetings: 10 financial TV programs, 13 Legislative Yuan committee meetings and 20 AliMeeting business meetings. The first two rows are notes contradicted by the transcript; the last two are coverage of the reference points.
+## Training
 
-| v1 → v2 | financial TV | Legislative Yuan | AliMeeting |
+1. **Teacher traces.** Qwen3.8-27B runs the same reading protocol on training meetings. A judge (Gemma-4-31B) checks every note against the transcript; turns with contradicted notes carry no loss.
+2. **SFT on Google's mobile weights.** A LoRA is trained on Gemma-4 QAT mobile weights. It covers reading rows plus summary rows, with distillation from the teacher's next-token distributions. Domains: Legislative Yuan committee meetings (IVOD), AliMeeting business meetings and Taiwanese financial TV programs.
+3. **On-policy distillation (mobile-v2).** The student reads 30 training meetings with the deployed harness. Gemma-4-31B scores the student's own rollouts with its top-20 distributions, and the student is trained on them.
+4. **Export to the phone:**
+   - **GPTQ onto Google's int2/int4 grid**, with Google's scales held fixed (`distill/gptq_mobile.py`). Plain rounding would erase the fine-tune.
+   - **Injection** of the integers into Google's `.litertlm` (`distill/inject_litertlm.py`).
+   - **Attention fusion** for the forked engine.
+
+**What did not help:**
+- DPO on teacher corrections;
+- mechanical number checks;
+- self-consistency;
+- a second round of on-policy distillation.
+
+The remaining errors are mostly *binding* errors: the right figure attached to the wrong year, article or body. They fall only with much larger models, so human review of decisions and key figures remains advisable.
+
+## Evaluation
+
+The evaluation uses 43 held-out meetings that never enter training:
+- 10 financial TV programs;
+- 13 Legislative Yuan committee meetings;
+- 20 AliMeeting business meetings.
+
+Gemma-4-31B judges each cited note against the transcript, from 30 s before its citation to 150 s after (`eval/judge_prose_tx.py`). Coverage is the share of reference points the notes recover. All runs use the forked engine on CPU with a 4k context.
+
+| mobile-v1 → mobile-v2 | financial TV | Legislative Yuan | AliMeeting |
 |---|---|---|---|
 | E4B contradicted | 15.8 → **11.7 %** | 10.6 → **9.6 %** | 8.5 → **8.0 %** |
 | E2B contradicted | 21.0 → **19.1 %** | 16.0 → **14.5 %** | 14.9 → **13.7 %** |
 | E4B coverage | 0.65 → **0.76** | 0.96 → 0.97 | 0.96 → 0.91 |
 | E2B coverage | 0.64 → **0.74** | 0.92 → 0.98 | 0.95 → 0.88 |
 
-- **E4B: the share of contradicted notes falls significantly**, by 1.5 points (95 % CI −2.9 to −0.2).
-- **E2B: the drop is within noise.**
-- **Both models write more notes and longer summaries.** Contradicted notes per meeting therefore rise, and at a fixed length of 1,000 characters recall falls slightly.
-- **AliMeeting coverage falls for both models** (significant).
+- **E4B:** contradicted notes fall significantly, by 1.5 points (95 % CI −2.9 to −0.2).
+- **E2B:** the drop is within noise.
+- **Both:** AliMeeting coverage falls, and the notes and summaries are longer.
 
-The system prompt changes in one line: up to 8 notes per window instead of 5.
+## Data
 
-**Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12–§13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
+Training data is built from noisy ASR transcripts, never from clean text, so the model learns to read what it will actually receive.
 
-## How the agent reads
+1. **Quality gates.** Transcripts are checked for language, repetition loops, length and ASR artefacts (`distill/v2_gates.py`).
+2. **Teacher notes.** Each note must cite a real transcript line.
+3. **Correction.** Defects are fixed only after a check against the transcript.
+4. **ASR is kept as is.** Misheard words stay as the ASR wrote them; they are never "corrected" to real-world facts.
 
-```mermaid
-flowchart LR
-    A[live ASR] -->|20 s segments| P[incremental prefill<br/>token IDs, n_predict 0]
-    P --> W[window closes<br/>~2k tokens, ~4 min]
-    W --> R{{reading turn<br/>≤ 5 NOTE lines, then NEXT}}
-    R --> J[(journal)]
-    J -->|context reaches 8k| X[restart from<br/>compacted journal]
-    X --> P
-    J --> M[minutes assembled from notes<br/>決議 · 待辦 · 保留 · 重要數字]
-```
+The training sets are not published, because the transcripts come from sources whose licences do not clearly allow redistribution. Only code, prompts and weights are released.
 
-- **One growing conversation.** The session is `[system] [journal] ([window k] [notes])*`. It only grows, so llama.cpp reuses its whole cache: each window costs only its own tokens.
-- **Incremental prefill.** Each 20 s ASR segment is appended as token IDs (`/completion`, `n_predict: 0`) while people talk. When the window closes, only the notes remain to generate. The driver renders the chat template once and owns the token sequence, so every request extends the cached one exactly.
-- **Short context on the phone.** Prefill on this CPU slows down with context depth:
-
-  | context in cache | 0 | 4k | 8k | 16k |
-  |---|---|---|---|---|
-  | prefill of a 128-token chunk (tok/s) | 34.9 | 12.2 | 7.9 | 4.6 |
-
-  At 8k the conversation restarts from a journal compacted to about 2.5k tokens (decisions, open issues and actions first, then recent notes). The restart is prefilled while the meeting goes on.
-- **The model does not write the minutes.** Small models merge and invent at a reduce step. The minutes are the notes, grouped by type (`DECISION`, `ACTION`, `OPEN-ISSUE`, `NUMBER`).
-- **Prompt rules that matter for a 2B:**
-  - at most 5 notes per window, each of at most 40 characters;
-  - no ASR speaker labels ("S3 認為…"), which are unreliable: such notes were contradicted at 27 %, against 17 % for the others;
-  - no body or person that the excerpt does not name.
-- **Guards:** at most 6 notes are parsed per turn, the output is capped at 400 tokens, near-duplicate notes are rejected, and every citation must resolve to a transcript line.
-
-## How it was built
-
-1. **Choosing the student.** Six ~2B Q4_0 models ran the same agent on the same sessions, under the same judge. Gemma-4-E2B was the only one to cover the meeting: coverage 0.77, against ≤ 0.33 for Qwen3.5-2B, MiniCPM5-2B, LFM2.5 and Apodex-2B. It was also the most faithful.
-2. **Tuning the harness, with no fine-tuning.** Eight training sessions served as a dev set. Removing speaker labels, dropping the self-check turn (it never corrected anything) and adding a key-figures section took coverage from 0.77 to 0.93 and brought the phone lag to real time.
-3. **Distillation.**
-   - Qwen3.8-27B (NInfer, NVFP4) ran the tuned protocol on 163 training sessions.
-   - The judge checked all 7,873 of its notes; turns with a contradicted note were kept as context but carry no loss.
-   - A LoRA (r = 16) was trained on the QAT weights over the replayed conversations, then merged and requantized to Q4_0.
-   - Result: gold decisions recalled rose from 72 % to 77 %.
-4. **What did not help.** On 38 sessions, neither of these moved faithfulness beyond noise (about ±2 points):
-   - on-policy DPO, where the 27B corrected 1,667 of the student's wrong windows;
-   - a mechanical check of the numbers in notes against the transcript;
-   - self-consistency: two samples per window, keeping only the notes both wrote. Samples rarely agree word for word, so coverage fell from 0.88 to 0.50, and the agreed notes were no more faithful (19 % contradicted in both cases).
-
-   The remaining errors are mostly relational: the right figure attached to the wrong year, scope or body.
-
-## Data preparation
-
-All training data is built from noisy ASR transcripts of long meetings in Traditional Chinese (parliament committee sessions and a corpus of office meetings), never from clean text, so the model learns to read what it will actually receive.
-
-1. **Transcripts.** Sessions are transcribed with ASR; a session whose transcript fails the quality gates (`distill/v2_gates.py`: language, repetition loops, length, ASR artefacts) is dropped or re-transcribed. Held-out evaluation sessions are chosen first and never enter any training set.
-2. **Windows.** Each transcript is cut into windows of about 4k tokens (`summarizer/ingest.py`), the unit the deployed agent reads.
-3. **Gold notes (map).** A teacher model writes timestamped notes for each window, every note anchored to a real transcript line. Citations that do not resolve to a line are rejected.
-4. **Gold summaries (reduce).** From all the notes of a meeting the teacher writes a numbered cited synthesis and a 280–560 character prose abstract. The prose gate requires at least 6 valid citations, coverage of the beginning, middle and end, and no Simplified characters (`distill/write_prose.py`).
-5. **Verification.** A second model proposes defects; every proposed fix is checked against the transcript before it is applied, and QA rounds stop when one produces no confirmed fix. The gold stays faithful to the noisy transcript: ASR garbles the speaker really said are kept, never normalised to real-world truth. A value is accepted only if it appears at its own timestamp, not elsewhere in the window.
-6. **SFT rows.** The notes, synthesis and prose become chat-format rows (`distill/export_training.py`, `distill/build_agent_sft.py`). Turns whose notes the judge found contradicted are kept as context but carry no loss.
-7. **Preference pairs (on-policy DPO).** The student reads training sessions with the deployed harness. The judge flags contradicted or unsupported notes (`eval/judge_prose_tx.py`), the teacher rewrites each from the transcript, and a rewrite is kept only if it is judged supported. `rejected` is the student's own reply and `chosen` the same reply with the notes replaced (`distill/build_dpo_pairs.py`); pairs whose notes were only dropped get a lower weight, since pure deletion teaches omission.
-
-The training sets are not published. The transcripts come from sources whose licences are non-commercial or unclear for redistribution, and the sets quote them; only code, prompts and weights are released.
-
-## Run
-
-On the phone, with the upstream llama.cpp Android build:
-
-```bash
-llama-server -m gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf -t 8 -c 32768 -np 1 --jinja --port 8200
-python3 eval/phone_live.py --url http://127.0.0.1:8200 --session <id> --speed 1 --ctx 8192 --out runs/phone
-```
-
-On a GPU host, for evaluation (the same protocol through the chat API):
-
-```bash
-llama-server -m gemma-4-E2B-meeting-agent-zh-v8-Q4_0.gguf -ngl 99 -c 131072 -np 4 --jinja --swa-full --port 8140 --alias rt
-python3 eval/realtime_agent.py --url http://127.0.0.1:8140/v1 --model rt --parallel 4 \
-  --harness v5 --no-check --overview none --number-section \
-  --read-max-tokens 400 --restart-journal-tokens 2500 --ctx 8192 --out runs/student/<name>
-PREFIX=h38 SPLIT=data/split_rt_heldout38.json bash scripts/rt_dev.sh <tag> <agent options>   # generate + judge
-```
-
-Building the model:
-
-```bash
-bash scripts/rt_teacher_traces.sh                   # 27B traces on training sessions, judged
-python3 distill/build_agent_sft.py                  # replay into SFT conversations
-python3 distill/sft_agent.py --out runs/sft/agent/lora
-python3 distill/merge_agent_lora.py --adapter runs/sft/agent/lora/epoch0 --out ft-ep0f16-q4_0.gguf
-```
-
-v6–v8 (conversion SFT, then multi-task GRPO; two GPUs):
-
-```bash
-python3 distill/convert_targets.py --journals runs/teacher/... --out runs/convert/teacher-train   # 27B summaries and titles
-python3 distill/build_convert_sft.py --targets runs/convert/teacher-train --judged <judge_prose_notes report> --out data/train/convert_rows.jsonl
-python3 -m torch.distributed.run --nproc_per_node 2 distill/sft_agent.py --rows <reading + conversion rows> --out runs/sft/agent/lora-v6
-python3 distill/rl_prompts.py                       # prompt pool: reading windows, prose and title calls
-bash scripts/v8_grpo.sh                             # GRPO (judge on GPU 1), merge, evaluation of the three tasks
-```
-
-The merge converts through f16, not bf16: the one tensor that stays unquantized (`per_layer_model_proj`) must be F16, as in Google's QAT GGUF. The phone CPU has no bf16, which cost 13 % of prefill speed.
-
-## Layout
+## Repository
 
 | path | contents |
 |---|---|
-| `eval/realtime_agent.py` | the reading agent (chat API; harness variants v0–v7, v5 deployed) |
-| `eval/phone_live.py` | live phone driver: real-speed replay, token-ID incremental prefill, measured lag |
-| `eval/judge_prose_tx.py`, `eval/judge_prose.py`, `eval/minutes_report.py`, `eval/rt_report.py` | transcript-grounded judge, coverage, per-section report, phone timing model |
-| `scripts/rt_dev.sh` | one generate-and-judge iteration (dev or held-out) |
-| `distill/build_agent_sft.py`, `distill/sft_agent.py`, `distill/merge_agent_lora.py` | distillation: data, LoRA training, merge → Q4_0 |
-| `eval/conversion_prompts.py`, `eval/judge_prose_notes.py`, `eval/title_eval.py`, `eval/section_precision.py` | VoxSumDroid's title and prose prompts; prose fidelity to the notes; title score; are decisions decided and actions assigned |
-| `distill/convert_targets.py`, `distill/build_convert_sft.py`, `distill/relabel_types.py` | teacher summaries and titles, filtered; type relabeling (v7, not kept) |
-| `distill/rl_prompts.py`, `distill/rl_rewards.py`, `distill/grpo_multi.py` | multi-task GRPO: prompt pool, judge rewards, trainer |
-| `distill/correct_onpolicy.py`, `distill/dpo_agent.py` | on-policy corrections and DPO (neutral, kept for reference) |
-| `eval/incremental_prefill_test.py`, `eval/number_check.py` | per-model incremental-prefill check; number check (no gain) |
+| `eval/realtime_agent.py` | the reading agent (chat API) |
+| `eval/phone_live.py` | live phone driver: real-speed replay, incremental prefill, measured lag |
+| `eval/judge_prose_tx.py`, `eval/judge_prose_notes.py`, `eval/section_precision.py` | transcript-grounded judge, summary fidelity, decision/action precision |
+| `eval/conversion_prompts.py` | the app's summary and title prompts |
+| `distill/sft_mobile_qat.py`, `distill/kd_teacher_logits.py` | LoRA training on the mobile weights, with distillation |
+| `distill/gptq_mobile.py`, `distill/inject_litertlm.py` | export to LiteRT-LM |
 | `summarizer/` | transcript ingest, windowing, citation resolution |
 
-Data (transcripts, gold minutes, preference pairs, runs) is not included: see *Data preparation* for how it is built and why it is not released. The weights are on Hugging Face (link above).
+## Roadmap
 
-## Next
+- ASR, diarization and E4B together on the Reno7 within the memory budget.
+- An in-process (JNI) engine for the Android app.
+- Judged quality of notes produced on the phone itself.
 
-- **On the device:**
-  - ASR, diarization and E4B together on the Reno7, within the memory budget;
-  - an in-process engine (JNI) for VoxSumDroid instead of a separate binary;
-  - judged quality of the notes produced on the phone.
-- **Faithfulness:** the remaining errors are mostly binding (the right fact on the wrong year, article or body), which falls only with much larger models (2.4 % for the 27B teacher); human review of decisions and key figures remains advisable.
-- **Titles on parliament meetings:** a pairwise reward against the teacher's title.
+## Appendix: version history
 
-## Appendix: previous versions
+mobile-v1 (2026-10-03) and the llama.cpp versions v3–v11, measured on 38 held-out IVOD sessions. Kept for reference.
 
-mobile-v1 (2026-10-03) and the llama.cpp versions v3–v11, measured on 38 held-out IVOD sessions.
-
-### mobile-v1: LiteRT-LM, on the phone's CPU, within 3 GB
+<details>
+<summary><b>mobile-v1: LiteRT-LM, on the phone's CPU, within 3 GB</b></summary>
 
 mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), inside Google's own Gemma-4-E2B **mobile** graph: int2 MLP in layers 15–34, int4 elsewhere, an int8 KV cache and int8 static-range activations. It is built in three steps:
 1. **Fine-tune on Google's mobile weights.** A LoRA trained on those weights distils v11: v11's top-32 next-token distributions plus the gold (`distill/kd_teacher_logits.py`, `distill/sft_mobile_qat.py --kd`).
@@ -203,7 +148,10 @@ mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteR
 
 **E4B mobile-v1** is built the same way on Google's Gemma-4-E4B mobile graph: 11 % of minutes contradicted, coverage 0.94, 待辦 really assigned 76 %, prose contradicting the notes 8 %, title 4.29. On stock LiteRT-LM it peaks at 4.58 GB; the forked engine brings it to 2.65 GB.
 
-### v11: more precise decisions, better titles
+</details>
+
+<details>
+<summary><b>v11: more precise decisions, better titles</b></summary>
 
 v11 is v8 plus a contrastive DPO (`distill/build_contrast_pairs.py`, `distill/dpo_agent.py`). The 2,700 pairs come from the teacher's verified notes, each with one note altered in one of the students' three dominant error types (`eval/contradiction_types.py`): the right fact on the wrong object, the wrong body or role, an inverted result.
 
@@ -222,7 +170,10 @@ v11 lists fewer decisions, and more of them were really decided. In exchange it 
 
 **Smaller students** (same data and protocol, LoRA SFT; IVOD 38): Qwen3.5-0.8B 31 % minutes contradicted (30 % after GRPO), coverage 0.83–0.86; Qwen3-0.6B 39 %; LFM2.5-1.2B 47 %; Hunyuan-0.5B 49 %; MiniCPM5-1B 50 %; Gemma-3-1B 52 %; Granite-4.0-350M 59 %. Qwen3.5-0.8B prefills ~3× faster than Gemma-4-E2B on a Raspberry Pi 4 and does not slow down with context depth (linear attention).
 
-### v8: reading, prose and title in one model
+</details>
+
+<details>
+<summary><b>v8: reading, prose and title in one model</b></summary>
 
 v8 is fine-tuned on all three jobs. The two conversion calls use VoxSumDroid's own prompts, byte for byte (`eval/conversion_prompts.py`). They are style conversions: the prose must say nothing the notes do not say.
 
@@ -254,8 +205,10 @@ v8 is fine-tuned on all three jobs. The two conversion calls use VoxSumDroid's o
 
 The prose of the 2B model is more faithful to the notes than its 27B teacher's, because it learned only from the teacher's faithful summaries. Titles are not yet better than v5's: the title reward barely varied within a sample group, so it gave the policy little signal. The weights are in `v8/` of the Hugging Face repo, with the same system prompt as v5.
 
-### v5
+</details>
 
+<details>
+<summary><b>v5</b></summary>
 
 On AliMeeting business meetings, v3 filed proposals as decisions and listed every idea discussed as an action. v5 (`--harness v5`):
 - adds a `PROPOSAL` type, filed under a 討論要點 section;
@@ -284,7 +237,10 @@ The weights are in `v5/` of the Hugging Face repo; v3 stays at the root. New mea
 
 With only the v5 prompt, the v3 weights reach the same precision on AliMeeting (79 % and 64 %) but lose coverage (0.79). Retraining keeps both. The rise in lag comes from v5 writing more notes on dense parliament sessions.
 
-### First results (v3, llama.cpp)
+</details>
+
+<details>
+<summary><b>First results (v3, llama.cpp)</b></summary>
 
 On 38 held-out IVOD sessions, judged by Gemma-4-31B against the transcript (`eval/judge_prose_tx.py`: each cited statement is checked from 30 s before its citation to 150 s after):
 
@@ -305,3 +261,5 @@ The deployed configuration restarts from the compacted journal at 8k tokens, as 
 | notes written | 80 |
 | effective speed | prefill 16 tok/s, decode 4.5 tok/s |
 | battery temperature | 30 → 37 °C over 2 h 10 |
+
+</details>
