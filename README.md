@@ -29,7 +29,7 @@ Ranges are over three held-out domains; see [Evaluation](#evaluation).
 
 ## Using it in an app
 
-Follow the [integration note](docs/voxsumdroid-integration.md). It covers running ASR, diarization and summarization in parallel, the prompts, and file revisions. §15 is the mobile-v2 checklist.
+Follow the [integration note](docs/voxsumdroid-integration.md). It covers running ASR, diarization and summarization in parallel, the prompts, and file revisions. §10 lists what changes when upgrading from mobile-v1.
 
 - **Engine:** the [forked LiteRT-LM engine](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention) fuses each attention block into one int8 op. It produces the same tokens as stock LiteRT-LM with half the memory (E4B: 2.65 GB instead of 4.58 GB).
 - **Context:** use 4k. 8k costs 10–20 % of the speed for little gain.
