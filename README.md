@@ -20,13 +20,15 @@ One small model does three jobs:
 | **K2-Horizon-0.9B (zh-TW), r16n** | llama.cpp, GGUF Q8_0 (1.17 GB) | 10–13 % (2 runs) | 0.89–0.92 | not measured yet | not measured yet | smallest model on par with E2B or better: unsupported 1–3 %, title 4.15, prose 88 % supported |
 | Gemma-3-270M | stock LiteRT-LM, CPU, int8 QAT | 58 % (13 sessions) | 0.64 | — | much faster | **smoke test only** |
 
+**New: mobile-v2 for E2B and E4B (2026-10-17).** A drop-in update of mobile-v1 trained with on-policy distillation from Gemma-4-31B, with the same engine, files, memory and speed. It was measured against mobile-v1 on 43 held-out meetings in three domains, not on IVOD 38, so the table above still shows mobile-v1. **E4B mobile-v2** contradicts the transcript less often: 1.5 points fewer contradicted notes, a significant drop, and 15.8 → 11.7 % on financial TV programs. It loses about 5 points of coverage on AliMeeting business meetings. **E2B mobile-v2** is optional: its gain is within noise. See [mobile-v2](#mobile-v2-on-policy-distillation-2026-10-17) and [integration note §15](docs/voxsumdroid-integration.md#15-mobile-v2-2026-10-17-new-weights-for-e2b-and-e4b).
+
 - **Forked engine** ([vieenrose/LiteRT-LM, branch `mobile-fused-attention`](https://github.com/vieenrose/LiteRT-LM/tree/mobile-fused-attention)): Google's mobile graph with each attention block fused into one int8 op, run by a standalone driver on the stock `libLiteRt.so`. Same greedy tokens as LiteRT-LM, half the memory for E2B, and E4B under 3 GB (4.58 GB on stock LiteRT-LM). **4k context is recommended**: 8k only adds decision recall (+7 points) and costs 10–20 % of the speed. Details: [integration note §13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 - **GPU:** on the Reno7's Mali-G68 it needs fp32 activations (fp16 corrupts long prompts), and is then slower than the CPU and uses more memory. Not recommended.
 - **K2-Horizon-0.9B:** a ~1B student (Llama architecture) with a zh-TW vocabulary extension (−30 % tokens on transcripts), zh-TW continued pretraining, agent SFT, then rounds of on-policy DPO (full fine-tuning; pairs sampled from the current model and ranked by the judge against the transcript): contradicted-note fixes (≈ 2,200 pairs, the biggest single gain), speaker-binding swaps, prose, titles, and finally missed-key-point "replace" pairs (the nearest wrongly stated note replaced by the correct one, the only data that moved coverage). Conservative DPO (label smoothing 0.1) on the judge-ranked rounds. The released checkpoint (r16n, GGUF Q8_0) has 10–13 % of minutes contradicted, 1–3 % unsupported, coverage 0.92 / 0.89 on two runs of IVOD 38, title 4.15 and prose 88 % supported, against 17 % / 5 % / 0.92 / 4.05 / 86.6 % for E2B (E2B measured on its mobile runtime). Keep 8-bit: int4 cost about 7 points of contradiction in our tests.
 
 **Weights:**
-- [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): `.litertlm` and the forked-engine files (`mfa/`).
-- [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): `mobile-v1/` (`.litertlm` and `mfa/`), Q4_0 GGUFs v3–v11, LoRA adapters, system prompt.
+- [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT): mobile-v1 at the root, **`mobile-v2/`** (`.litertlm`, `mfa/`, system prompt, LoRA and merged safetensors checkpoint).
+- [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): **`mobile-v2/`** (`.litertlm`, `mfa/`, system prompt, LoRA and merged safetensors checkpoint), `mobile-v1/` (`.litertlm` and `mfa/`), Q4_0 GGUFs v3–v11, LoRA adapters, system prompt.
 - [Luigi/K2-Horizon-0.9B-meeting-agent-zh](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh): the released K2 checkpoint as fp32 safetensors for further fine-tuning (transformers), with the extended tokenizer, chat template and prompts.
 - [Luigi/K2-Horizon-0.9B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/K2-Horizon-0.9B-meeting-agent-zh-GGUF): the same weights as GGUF Q8_0 for llama.cpp (the file evaluated above).
 - [Luigi/gemma-3-270m-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-3-270m-meeting-agent-zh-LiteRT): a **smoke-test model** speaking the same protocol and note format (290 MB, int8 with quantization-aware training). Too inaccurate for real use; it exists to exercise an app pipeline end to end in seconds.
@@ -71,6 +73,30 @@ mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteR
 | 決議事項 really decided | 71 % | 75 % |
 
 **E4B mobile-v1** is built the same way on Google's Gemma-4-E4B mobile graph: 11 % of minutes contradicted, coverage 0.94, 待辦 really assigned 76 %, prose contradicting the notes 8 %, title 4.29. On stock LiteRT-LM it peaks at 4.58 GB; the forked engine brings it to 2.65 GB.
+
+## mobile-v2: on-policy distillation (2026-10-17)
+
+mobile-v2 continues mobile-v1 in two stages:
+1. **SFT** on reading rows plus dense-list conversion rows, adding Taiwanese financial TV programs as a third domain.
+2. **One round of on-policy distillation.** The student reads 30 training meetings with the deployed harness. Gemma-4-31B scores the student's own rollouts with its top-20 next-token distributions, and the student is trained on those distributions (`distill/opd_teacher.py`, `distill/opd_mix.py`, `sft_mobile_qat.py --kd`).
+
+The export is unchanged: GPTQ, then injection, then attention fusion. A second round of on-policy distillation gave nothing more.
+
+The comparison against mobile-v1 uses the forked engine (CPU, 4k) and the same judge, on 43 held-out meetings: 10 financial TV programs, 13 Legislative Yuan committee meetings and 20 AliMeeting business meetings. The first two rows are notes contradicted by the transcript; the last two are coverage of the reference points.
+
+| v1 → v2 | financial TV | Legislative Yuan | AliMeeting |
+|---|---|---|---|
+| E4B contradicted | 15.8 → **11.7 %** | 10.6 → **9.6 %** | 8.5 → **8.0 %** |
+| E2B contradicted | 21.0 → **19.1 %** | 16.0 → **14.5 %** | 14.9 → **13.7 %** |
+| E4B coverage | 0.65 → **0.76** | 0.96 → 0.97 | 0.96 → 0.91 |
+| E2B coverage | 0.64 → **0.74** | 0.92 → 0.98 | 0.95 → 0.88 |
+
+- **E4B: the share of contradicted notes falls significantly**, by 1.5 points (95 % CI −2.9 to −0.2).
+- **E2B: the drop is within noise.**
+- **Both models write more notes and longer summaries.** Contradicted notes per meeting therefore rise, and at a fixed length of 1,000 characters recall falls slightly.
+- **AliMeeting coverage falls for both models** (significant).
+
+The system prompt changes in one line: up to 8 notes per window instead of 5.
 
 **Why 4k.** LiteRT-LM's XNNPACK backend allocates, per graph partition, a workspace of ctx² × 4 bytes × KV heads, so memory grows quadratically with the context. One session per window at 4k loses almost nothing in quality. Details and recommended settings: [integration note §12–§13](docs/voxsumdroid-integration.md#13-the-forked-engine-recommended).
 
