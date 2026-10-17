@@ -78,7 +78,7 @@ mobile-v1 runs the reader on [LiteRT-LM](https://github.com/google-ai-edge/LiteR
 
 mobile-v2 continues mobile-v1 in two stages:
 1. **SFT** on reading rows plus dense-list conversion rows, adding Taiwanese financial TV programs as a third domain.
-2. **One round of on-policy distillation.** The student reads 30 training meetings with the deployed harness. Gemma-4-31B scores the student's own rollouts with its top-20 next-token distributions, and the student is trained on those distributions (`distill/opd_teacher.py`, `distill/opd_mix.py`, `sft_mobile_qat.py --kd`).
+2. **One round of on-policy distillation.** The student reads 30 training meetings with the deployed harness. Gemma-4-31B scores the student's own rollouts with its top-20 next-token distributions, and the student is trained on those distributions (`distill/sft_mobile_qat.py --kd`).
 
 The export is unchanged: GPTQ, then injection, then attention fusion. A second round of on-policy distillation gave nothing more.
 
