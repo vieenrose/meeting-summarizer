@@ -12,7 +12,7 @@ The note is written against VoxSumDroid `66defa3` (2026-09-29) and this repo's `
 
 | | |
 |---|---|
-| model | [`Luigi/gemma-4-E2B-meeting-agent-zh-GGUF`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF): Gemma-4-E2B, as a LiteRT-LM `.litertlm` (mobile-v1) or a llama.cpp Q4_0 GGUF (v3–v11), Apache-2.0 |
+| model | [`Luigi/gemma-4-E2B-meeting-agent-zh`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh): Gemma-4-E2B, as a LiteRT-LM `.litertlm` (mobile-v1) or a llama.cpp Q4_0 GGUF (v3–v11), Apache-2.0 |
 | file (mobile-v1, recommended) | `mobile-v1/gemma-4-E2B-meeting-agent-zh-mobile-v1.litertlm`, 2,588,138,320 bytes, sha256 `45664b0a6a6d02b3d9a7c388bee69657d69320e25571f36cf22ceff8fb54232c`, HF revision `6fbe081eed5fae4ba82d0319896d633a20812d5d`; LiteRT-LM, CPU, 4k context: **§12** |
 | file (v11) | `v11/gemma-4-E2B-meeting-agent-zh-v11-Q4_0.gguf`, 3,349,515,904 bytes, sha256 `16c69abb76e09821bdd08a022091dbb9b84620cc589491f36d294e6ee92f73f0`, HF revision `a862b705f3aaf7edee2018f4e3abae286826f11d` |
 | system prompt (v11) | `v11/system_prompt.txt` at the same revision; identical to v5's and v8's |
@@ -98,7 +98,7 @@ The model was fine-tuned on this protocol. Deviations, such as another system pr
 <|turn>user\n## 逐字稿片段 {k+1}\n …
 ```
 
-- `{SYSTEM}` = [`v11/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF/blob/main/v11/system_prompt.txt), verbatim (the same text as `v5/` and `v8/system_prompt.txt`). Each model version was trained with its own prompt: never pair the v5 or v8 weights with the v3 prompt, or the reverse.
+- `{SYSTEM}` = [`v11/system_prompt.txt`](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh/blob/main/v11/system_prompt.txt), verbatim (the same text as `v5/` and `v8/system_prompt.txt`). Each model version was trained with its own prompt: never pair the v5 or v8 weights with the v3 prompt, or the reverse.
 - `{JOURNAL}` = `## 筆記本（至今）\n` followed by the journal lines, or `（尚無筆記）` at the start.
 - `ChatTemplate` needs a `GEMMA4` entry. Tokenize the template pieces with special-token parsing, and the transcript text without it.
 
@@ -514,7 +514,7 @@ The weights and protocol are the §12 ones, run by our own CPU engine instead of
 
 | | E2B | E4B |
 |---|---|---|
-| HF repo | [Luigi/gemma-4-E2B-meeting-agent-zh-GGUF](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh-GGUF), folder `mobile-v1/mfa/` | [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT), folder `mfa/` |
+| HF repo | [Luigi/gemma-4-E2B-meeting-agent-zh](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh), folder `mobile-v1/mfa/` | [Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT](https://huggingface.co/Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT), folder `mfa/` |
 | `prefill_decode_fused.tflite` | 818,394,320 bytes, sha256 `6a7555ccc349be490fca4ed63ebf7fdafd8e4a4510012f3ae9c38f8009b5fcae` | 2,260,210,576 bytes, sha256 `34858194f4f596fae132470a2e0f2f0f276e540c7af8502e4ef7cca99e871424` |
 | `Section2_…_embedder.tflite` | 104 MB | 171 MB |
 | `Section3_…_per_layer_embedder.tflite` | 1.28 GB | 0.84 GB |
@@ -758,7 +758,7 @@ The export is the same as mobile-v1: GPTQ onto Google's grid, injection into Goo
 
 | | E2B | E4B |
 |---|---|---|
-| repo | `Luigi/gemma-4-E2B-meeting-agent-zh-GGUF` | `Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT` |
+| repo | `Luigi/gemma-4-E2B-meeting-agent-zh` | `Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT` |
 | revision | `885cdffc87aaf1d8095266b506edbb8e8f07598b` | `389bc2f944f1c5a4d74bc30348e32e13e931d987` |
 | folder | `mobile-v2/mfa` | `mobile-v2/mfa` |
 | prompt | `mobile-v2/system_prompt.txt` | `mobile-v2/system_prompt.txt` |
@@ -787,7 +787,7 @@ The app does not need them.
 ```swift
 private static let promptSha = "044150e8e18c05f807c88ca88358953f81fcc74fe85959184d66c65d81fd4843"   // mobile-v2/system_prompt.txt
 static let e2b: ReaderModel = {
-    var m = make("E2B", "Luigi/gemma-4-E2B-meeting-agent-zh-GGUF", "885cdffc87aaf1d8095266b506edbb8e8f07598b",
+    var m = make("E2B", "Luigi/gemma-4-E2B-meeting-agent-zh", "885cdffc87aaf1d8095266b506edbb8e8f07598b",
         dir: "mobile-v2/mfa", prompt: "mobile-v2/system_prompt.txt", [
         (103_811_720, "280327ee5720663acd2268c2e5d42caad33f70ba7931eef8c8b3018b4e2a4980"),
         (1_284_518_392, "dca1e5553b4159558b17073c94fcc7ff16646e99a56a0614728435ac4b571720"),
