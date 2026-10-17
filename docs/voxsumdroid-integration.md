@@ -1,6 +1,6 @@
 # Integrating the realtime meeting reader into VoxSumDroid
 
-**Current models: mobile-v1, E2B and E4B** (2026-10-03). Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 2.7 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. **A third, smaller model: K2-Horizon-0.9B (§14),** a GGUF Q8_0 for llama.cpp (1.17 GB) that contradicts the transcript in 10–13 % of notes, on par with E2B or better, with its own title and prose. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
+**Current models: mobile-v2, E2B and E4B** (2026-10-17, **§15**): a drop-in update of mobile-v1 (2026-10-03) with a new main graph and one changed line in the system prompt. E4B mobile-v2 contradicts the transcript less often than mobile-v1; see §15.4 for the trade-offs. Run them on the **CPU only**, with the **forked LiteRT-LM engine** of **§13**. E2B fits in 1.3 GB and E4B in 2.7 GB. E4B contradicts the transcript less often: 11 % of minutes, against 17 % for E2B. §12 covers stock LiteRT-LM, with the same `.litertlm` file and the same protocol. Both supersede the llama.cpp path for new integrations. **A third, smaller model: K2-Horizon-0.9B (§14),** a GGUF Q8_0 for llama.cpp (1.17 GB) that contradicts the transcript in 10–13 % of notes, on par with E2B or better, with its own title and prose. The llama.cpp GGUFs stay available: v11 (most precise decisions among them) and v8 (widest coverage). v0.45 integrates v3; §9–§11 list the changes from v3 to v11.
 
 One model, three jobs: it **reads the meeting live** and writes notes (§4.3), then, at stop, it **titles the meeting** (§4.6) and **writes the prose summary** (§4.7) from those notes. From v8 on, all three are fine-tuned; v11 has the most precise decisions and the best titles.
 
@@ -741,3 +741,95 @@ Details are in the [model card](https://huggingface.co/Luigi/K2-Horizon-0.9B-mee
 Re-download both, or keep an old file and pass `--chat-template-file chat_template.jinja --skip-chat-parsing`. VoxSumDroid builds the prompt text itself (§14.3) and is not affected when it does so.
 
 **Using the model outside the protocol.** It was trained for the reading turn (`NOTE [time] (TYPE) text` lines, then `NEXT`), a title and a cited prose, with the prompts of the repo used verbatim. Other requests, such as filling a table, are out of distribution: expect English words, wrong columns and invented details. Invented details inside the protocol, such as a deadline absent from the transcript, belong to the 10–16 % contradiction rate of §14.4; that rate is the main work item. A fair comparison with E2B needs the same transcripts, the same prompts and a judge against the transcript, as §14.4 does.
+
+## 15. mobile-v2 (2026-10-17): new weights for E2B and E4B
+
+mobile-v2 is a drop-in update for the mobile-v1 integration of §12–§13. The engine, the file layout, the chat template, the protocol and the budgets are unchanged. Two things change: the fused main graph and one line of the system prompt. The embedders and the tokenizer are byte-identical to mobile-v1.
+
+### 15.1 What changed in training
+
+mobile-v2 continues mobile-v1 with two training stages:
+1. SFT on reading rows plus dense-list conversion rows. The data adds a third domain: Taiwanese financial TV programs.
+2. One round of **on-policy distillation**. The student reads training meetings with the deployed harness. Gemma-4-31B then gives its top-20 next-token distribution on the student's own rollouts, and the student is trained on it.
+
+The export is the same as mobile-v1: GPTQ onto Google's grid, injection into Google's mobile graph, then attention fusion (§12.6, §13.1).
+
+### 15.2 The files
+
+| | E2B | E4B |
+|---|---|---|
+| repo | `Luigi/gemma-4-E2B-meeting-agent-zh-GGUF` | `Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT` |
+| revision | `885cdffc87aaf1d8095266b506edbb8e8f07598b` | `389bc2f944f1c5a4d74bc30348e32e13e931d987` |
+| folder | `mobile-v2/mfa` | `mobile-v2/mfa` |
+| prompt | `mobile-v2/system_prompt.txt` | `mobile-v2/system_prompt.txt` |
+
+| file | E2B bytes, sha256 | E4B bytes, sha256 |
+|---|---|---|
+| `prefill_decode_fused.tflite` (**new**) | 818,394,320, `df54bbbb1f96047268fa28f182d00da48f22a4a3d649e34addc0633cfaf97d36` | 2,260,210,576, `2d346d0e5f4c1a91ae3ab9df7cea2e29992f4d60a7c661ccbc886e964fe618d0` |
+| `system_prompt.txt` (**new**) | 1,686, `044150e8e18c05f807c88ca88358953f81fcc74fe85959184d66c65d81fd4843` | same file |
+| `Section2_TFLiteModel_tf_lite_embedder.tflite` (= v1) | 103,811,720, `280327ee5720663acd2268c2e5d42caad33f70ba7931eef8c8b3018b4e2a4980` | 170,920,584, `94cf45ffd3d0dd7040d27b22e70845cf1054db90613bf31d8ffc1623d23d4a40` |
+| `Section3_TFLiteModel_tf_lite_per_layer_embedder.tflite` (= v1) | 1,284,518,392, `dca1e5553b4159558b17073c94fcc7ff16646e99a56a0614728435ac4b571720` | 836,778,512, `d35fe41db89fa0128f5da9530886a12581cee715369e1b9ed9a3644e43d16a6a` |
+| `Section1_SP_Tokenizer.spiece` (= v1) | 4,689,013, `e594c8a90eb08d8bda498ff4747977dc827ae0c3c56b5c0d41a605a22d02ef03` | same |
+| `mobile-v2/gemma-4-E?B-meeting-agent-zh-mobile-v2.litertlm` (stock LiteRT-LM, §12) | 2,588,138,320, `2c2dc0ba618d51966b2bb57f55d8ae0cc75a12759ef5552af8c4b620f48b7aed` | 3,659,518,480, `d8c3a9d4832b13a45467b4435fc4e982c2b2ce705b65cb7c75a141e936ad43db` |
+
+Each `mobile-v2/` folder also holds the checkpoints:
+- `lora/qat_lora.safetensors`: the training-format LoRA on Google's mobile weights. It is not a PEFT adapter.
+- `safetensors/`: the merged checkpoint after GPTQ, in the format of Google's mobile HF checkpoint.
+
+The app does not need them.
+
+### 15.3 Integrating it
+
+**The system prompt changes in one line.** `每段最多 5 則` becomes `每段最多 8 則`: mobile-v2 was trained and evaluated with up to 8 notes per window. Its size is unchanged at 1,686 bytes, but its sha256 is different. Pair each prompt with its own weights: v1 prompt with v1 weights, v2 prompt with v2 weights. The model card's `reader.max_notes` (12) can stay. To match the evaluation exactly, set it to 8.
+
+**Prime Minutes, iOS (`ios/App/ModelStore.swift`).** Pin the new revision and folder, and give the prompt its own sha256. `make()` currently shares one `promptSha` for both models; pass the hash per model, or replace the constant:
+
+```swift
+private static let promptSha = "044150e8e18c05f807c88ca88358953f81fcc74fe85959184d66c65d81fd4843"   // mobile-v2/system_prompt.txt
+static let e2b: ReaderModel = {
+    var m = make("E2B", "Luigi/gemma-4-E2B-meeting-agent-zh-GGUF", "885cdffc87aaf1d8095266b506edbb8e8f07598b",
+        dir: "mobile-v2/mfa", prompt: "mobile-v2/system_prompt.txt", [
+        (103_811_720, "280327ee5720663acd2268c2e5d42caad33f70ba7931eef8c8b3018b4e2a4980"),
+        (1_284_518_392, "dca1e5553b4159558b17073c94fcc7ff16646e99a56a0614728435ac4b571720"),
+        (818_394_320, "df54bbbb1f96047268fa28f182d00da48f22a4a3d649e34addc0633cfaf97d36")])
+    m.gpu = nil   // no mobile-v2 GPU graph, see below
+    return m
+}()
+static let e4b = make("E4B", "Luigi/gemma-4-E4B-meeting-agent-zh-LiteRT", "389bc2f944f1c5a4d74bc30348e32e13e931d987",
+    dir: "mobile-v2/mfa", prompt: "mobile-v2/system_prompt.txt", [
+    (170_920_584, "94cf45ffd3d0dd7040d27b22e70845cf1054db90613bf31d8ffc1623d23d4a40"),
+    (836_778_512, "d35fe41db89fa0128f5da9530886a12581cee715369e1b9ed9a3644e43d16a6a"),
+    (2_260_210_576, "2d346d0e5f4c1a91ae3ab9df7cea2e29992f4d60a7c661ccbc886e964fe618d0")])
+```
+
+Because the revision changes, the store's revision check (same sizes, new revision) re-downloads every file once. This includes the unchanged embedders. To avoid it, keep the old files when their sha256 matches.
+
+**Delete the XNNPACK weight cache** (`--weight-cache`, §13.3) when the main graph changes. It is built from the old graph. The first run then rebuilds it, as on a fresh install.
+
+**No GPU graph for mobile-v2.** `mobile-v1/mfa-gpu/` holds mobile-v1 weights. Do not pair it with the mobile-v2 CPU files: switching backend would switch models. Drop the GPU option for mobile-v2 (`m.gpu = nil`), or keep mobile-v1 for GPU users together with the mobile-v1 prompt. The CPU path is the recommended one (§13).
+
+**Speed and memory** are those of mobile-v1 (§13.2): same graph shapes, same quantization, same sizes. mobile-v2 writes more notes per window, so each window's decode takes a little longer.
+
+### 15.4 Quality against mobile-v1
+
+Same engine (forked, CPU, 4k) and same judge (Gemma-4-31B), on 43 held-out meetings that neither version was trained on: 10 financial TV programs, 13 Legislative Yuan committee meetings and 20 AliMeeting business meetings. Each pair of rates below is mobile-v1 → mobile-v2.
+
+| | financial TV | Legislative Yuan | AliMeeting |
+|---|---|---|---|
+| E4B: notes contradicted by the transcript | 15.8 → **11.7 %** | 10.6 → **9.6 %** | 8.5 → **8.0 %** |
+| E4B: coverage of the reference points (dense-list summary) | 0.65 → **0.76** | 0.96 → 0.97 | 0.96 → 0.91 |
+| E2B: notes contradicted by the transcript | 21.0 → **19.1 %** | 16.0 → **14.5 %** | 14.9 → **13.7 %** |
+| E2B: coverage of the reference points (dense-list summary) | 0.64 → **0.74** | 0.92 → 0.98 | 0.95 → 0.88 |
+
+Paired bootstrap over the 43 meetings, 95 % CI:
+
+- **E4B.** The share of contradicted notes drops by 1.5 points (CI −2.9 to −0.2): **a significant gain**. Recall rises on the financial programs (+0.12) and falls on AliMeeting (−0.05); both changes are significant.
+- **E2B.** The share of contradicted notes drops by 1.0 point (CI −2.9 to +0.8): **within noise**. Recall rises on the financial programs (+0.12) and falls on AliMeeting (−0.075); both changes are significant.
+
+mobile-v2 writes more notes than mobile-v1, so the number of contradicted notes per meeting rises: +1.2 for E4B, +3.5 for E2B. Part of the coverage gain comes from longer summaries: at a fixed length of 1,000 characters, mobile-v2 recalls slightly less than mobile-v1.
+
+The app's own prose call (§4.7) and title call (§4.6) were not re-measured with mobile-v2. Coverage above is measured on a dense-list summary built from the notes.
+
+**Recommendation:**
+- **E4B: move to mobile-v2.** It contradicts the transcript less and covers dense programs better. The exception is an app that mostly summarizes business meetings like AliMeeting, where coverage drops by about 5 points.
+- **E2B: optional.** mobile-v2 is better on the financial and committee meetings, but its precision gain is not significant and it loses coverage on business meetings. Keep mobile-v1 if that domain matters most.
