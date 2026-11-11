@@ -6,7 +6,7 @@ The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR. The output 
 
 **Status, 2026-11-11: planned. The questionnaire and its scorer exist and are being validated; no v4 training has run yet.**
 
-One small model on the phone (Spark-X2.6 1.7B, Q4) reads the whole transcript once and writes the summary directly. The target is 2–3 h zh-TW meetings mixed with English, within about 3 GB of memory. The bar to beat is the agentic Gemma-4-E4B fine-tune (mobile-v2).
+One small model on the phone (Spark-X2.6 1.7B, Q4) reads the whole transcript once and writes the summary directly. The target is 2–3 h zh-TW meetings mixed with English, within about 3 GB of memory. The target device is the **Samsung Galaxy A53**; memory and speed still have to be measured on it. The bar to beat is the agentic Gemma-4-E4B fine-tune (mobile-v2).
 
 **Idea.** A good summary is good in form and in content.
 
@@ -75,4 +75,4 @@ The agent is reliable but slow on a phone. v4 replaces it with one pass of a sma
 
 ## Status
 
-Research, not production. Still to do: validate the questionnaire score, run the first offline round, human evaluation, and measurement on the phone (memory, speed, heat).
+Research, not production. Still to do: validate the questionnaire score, run the first offline round, human evaluation, and measurement on the Galaxy A53 (memory, speed, heat).
