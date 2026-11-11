@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from summarizer.ingest import parse_line, resolve_citation  # noqa: E402
 from summarizer.pipeline import ChatClient  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from haiku_chat import client  # noqa: E402
 
 SPAN_BEFORE, SPAN_AFTER, MAX_LINES = 30, 150, 120
 CITE = re.compile(r"[\[［]([\d:,\s]+)[\]］]")
@@ -65,6 +67,26 @@ def excerpt(sentence, lines):
     return "\n".join(keep[:MAX_LINES])
 
 
+def bigrams(t):
+    t = re.sub(r"[\s，。、；：！？「」（）()\[\]\d:,]", "", t)
+    return {t[i:i + 2] for i in range(len(t) - 1)}
+
+
+def retrieve(sentence, lines, k=3):
+    """Excerpt for a sentence without citation: windows around the k transcript lines sharing most char bigrams."""
+    sb = bigrams(re.sub(CITE, "", sentence))
+    if not sb:
+        return None
+    score = sorted(((len(sb & bigrams(l.render())) / (1 + len(bigrams(l.render())) ** 0.5), i) for i, l in enumerate(lines)), reverse=True)[:k]
+    keep = set()
+    for sc, i in score:
+        if sc <= 0:
+            continue
+        t0, t1 = lines[i].start_s - SPAN_BEFORE, lines[i].start_s + SPAN_BEFORE
+        keep |= {j for j, l in enumerate(lines) if t0 <= l.start_s <= t1}
+    return "\n".join(lines[j].render() for j in sorted(keep))[:6000] or None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--candidate", required=True)
@@ -74,10 +96,12 @@ def main():
     ap.add_argument("--judge-model", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--parallel", type=int, default=8)
+    ap.add_argument("--retrieve-uncited", action="store_true",
+                    help="judge uncited sentences too: excerpt = windows around the best char-bigram matching lines")
     ap.add_argument("--think", action="store_true", help="let the judge think (model default template)")
     args = ap.parse_args()
-    chat = (ChatClient(args.judge_url, args.judge_model, max_tokens=6000, no_chat_template_kwargs=True) if args.think
-            else ChatClient(args.judge_url, args.judge_model, max_tokens=300))
+    chat = (ChatClient(args.judge_url, args.judge_model, max_tokens=8000, temperature=None, no_chat_template_kwargs=True) if args.think
+            else client(args.judge_url, args.judge_model, 300))
     jobs = []
     for sid in json.load(open(args.split))["heldout"]:
         p = os.path.join(args.candidate, sid + ".json")
@@ -87,7 +111,7 @@ def main():
         lines = [parse_line(l) for l in open(os.path.join(args.transcripts, sid + ".txt"),
                                               encoding="utf-8").read().splitlines() if l.strip()]
         for s in sentences(prose):
-            jobs.append((sid, s, excerpt(s, lines)))
+            jobs.append((sid, s, excerpt(s, lines) or (retrieve(s, lines) if args.retrieve_uncited else None)))
 
     def one(job):
         sid, s, ex = job
