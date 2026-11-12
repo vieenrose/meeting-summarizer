@@ -1,12 +1,30 @@
-# Meeting Summarizer v4
+# Meeting Summarizer v4.5
 
-Reliable minutes for long meetings, produced **on the phone**.
+Reliable minutes for long meetings, produced **on the phone** by a small model in one pass per part.
 
-The input is a 1.5–3 h zh-TW meeting transcribed by on-device ASR. The output is a structured summary in which statements cite the transcript time they rest on.
+The input is a 1.5–3 h zh-TW meeting (mixed with English) transcribed by on-device ASR. The output is a **multi-part summary**: the meeting is cut into a few parts, each part gets a short summary under a topic title, and decisions and actions are gathered at the end. Every statement cites the transcript time it rests on.
 
-**Status, 2026-11-13: research. The questionnaire score is validated; one offline training round ran and gave no gain. Nothing from v4 is released.**
+**Status, 2026-11-13: v4.5 is the new direction; the multi-part test has not run yet. Nothing from v4 or v4.5 is released.**
 
-One small model on the phone reads the whole transcript once and writes the summary directly. The student is **Bolt 4GB**, run CPU-only on a Galaxy Note10+; Gemma-4-E2B stays the model for the **Samsung Galaxy A53**. The target is 2–3 h zh-TW meetings mixed with English. Inputs longer than 64k tokens are truncated to 60k (prefill ≈ 90 min on the Note10+, 3.2 GB peak). The bar is a readable summary of fixed length (400 + 600 characters per hour, capped at 2200) that answers as many questionnaire items as the teacher's.
+**Why v4.5.** v4 asked one sub-4B model to summarise a whole 2–3 h transcript at once. It works but fails in two ways ([issue #1](https://github.com/vieenrose/meeting-summarizer/issues/1)): small models favour the start of long input (position bias: 65 % of citations in the first third), and a 60k-token prefill takes about 90 min on the phone. Cutting the meeting into parts keeps each input in the range where small models read evenly, and gives the reader a structure by topic.
+
+**Design.**
+
+```mermaid
+flowchart LR
+    A[transcript, M tokens] --> B{M ≤ ~20k?}
+    B -- yes --> C[one-pass summary]
+    B -- no --> D[k = ⌈M / 20k⌉ parts, at most 3<br/>cut at speaker changes]
+    D --> E[one-pass summary per part<br/>budget = total / k<br/>+ topic titles of earlier parts]
+    E --> F[code merges parts<br/>global decisions + actions]
+    C --> G[summary]
+    F --> G
+```
+
+- **Model:** sub-4B LLM on the phone, CPU only. Current student: Bolt 4GB on a Galaxy Note10+; Gemma-4-E2B for the Galaxy A53.
+- **Part size N ≈ 20k tokens** balances phone cost and content. Measured on the Note10+ (Bolt, CPU): prefill 34 tok/s at 16k vs 10.7 tok/s at 60k; peak memory 2.75 GB at 16k vs 3.19 GB at 60k.
+- **Fixed total length** whatever the meeting length (400 + 600 characters per hour, capped at 2200), split evenly across parts. Titles are thematic, not "Part 1".
+- **Test (next):** N = 8k / 16k / 24k / 32k against one pass, with independent parts vs parts that carry earlier titles. Same total length, 4 seeds, legislative and financial sets.
 
 **Idea.** A good summary is good in form and in content.
 
@@ -51,7 +69,7 @@ flowchart TD
 - *Length alone is not a lever.* A sweep of shorter and longer budgets, with no training, moved scores by −0.05 to +0.04.
 - *Teacher.* Claude Opus 5.5 (low effort) answers 0.64 of the questions vs 0.44 for the previous teacher, with fewer contradicted sentences (20 % vs 32 %). It now writes the reference summaries for the whole training pool (212 meetings). Only its sentences that the judge finds supported are reused.
 
-**Plan.** First tune the format without training. Then repair the student's own summaries with supported teacher statements for the parts they miss; this raises the score by +0.05 to +0.08 on a 31-meeting prototype. Each repair must pass a contradiction gate. Use RL only to make the format reliable (length band, no repeats, valid end). For long meetings ([issue #1](https://github.com/vieenrose/meeting-summarizer/issues/1)), the next test cuts transcripts over ~20k tokens into at most 3 parts. Each part gets its own one-pass summary, and decisions and actions are merged by code.
+**Training plan (applies per part).** First tune the format without training. Then repair the student's own summaries with supported teacher statements for the parts they miss; this raises the score by +0.05 to +0.08 on a 31-meeting prototype. Each repair must pass a contradiction gate. Use RL only to make the format reliable (length band, no repeats, valid end).
 
 ## Layout
 
@@ -77,8 +95,8 @@ ASR output is never corrected; long meetings are never excluded.
 
 The model currently released is **mobile-v2**, a reading agent with an external journal on Gemma-4-E2B/E4B. Its model card, app integration and results are in [docs/mobile-v2.md](docs/mobile-v2.md); older versions are in [docs/version-history.md](docs/version-history.md).
 
-The agent is reliable but slow on a phone. v4 replaces it with one pass of a smaller model and moves the effort into the training signal. Nothing from v4 is released yet.
+The agent is reliable but slow on a phone. v4 replaced it with one pass of a smaller model; v4.5 keeps one pass but per part. Nothing from v4 / v4.5 is released yet.
 
 ## Status
 
-Research, not production. Still to do: the repair-and-gate round, the multi-part test, human evaluation, and measurement on the Note10+ / A53 (speed, heat).
+Research, not production. Still to do: the multi-part test (choice of N), the repair-and-gate round, human evaluation, and measurement on the Note10+ / A53 (speed, heat).
