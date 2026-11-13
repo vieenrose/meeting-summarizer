@@ -55,52 +55,54 @@ Known limitation: there is no dense 2 h development set; the dense sets are 0.5�
 - **Repaired targets, whole-meeting version** (1,222 pairs): supported coverage rises from 0.59 to 0.86 on financial talks, 0.78 to 0.92 and 0.77 to 0.95 on multi-speaker sets, 0.23 to 0.43 on legislative sessions. First contradiction gate (financial talks): 3 % of sentences contradicted.
 - **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
 
-## Training signal (from v4)
+## Measurement and training signal
 
 **Idea.** A good summary is good in form and in content.
 
 - *Form* (sections, length, timestamps) is enforced by a grammar and checked by code.
-- *Content* is measured by a questionnaire: a reader who holds only the summary should answer questions that cover the whole meeting.
+- *Content* is measured two ways: a questionnaire (a reader who holds only the summary should answer questions that cover the meeting) and a per-sentence contradiction judge.
 
 ```mermaid
 flowchart TD
     A[meeting audio] --> B[on-device ASR<br/>transcript]
+    B --> P[cut into parts of N tokens<br/>at speaker changes]
 
-    subgraph P1[1 · Questionnaire]
-        B --> C[large model writes questions<br/>per equal-time slice]
-        C --> D[multiple-choice items<br/>answer key + verbatim quote]
-        D --> E[gates<br/>quote found in transcript,<br/>guessable items dropped]
+    subgraph S1[1 · Summarise per part]
+        P --> F[small model reads one part<br/>writes its section]
+        F --> M[code merges sections,<br/>decisions and actions]
     end
 
-    subgraph P2[2 · Sample and score]
-        B --> F[small model writes<br/>several summaries per meeting]
+    subgraph S2[2 · Measure]
+        B --> Q[questionnaire<br/>multiple-choice items per part]
         F --> G[answerer sees only the summary]
-        E --> G
-        G --> H[graded by code<br/>correct + / wrong −]
-        F --> I[form and length checks]
+        Q --> G
+        G --> H[coverage score]
+        F --> J[contradiction judge<br/>per sentence, at the cited time]
+        F --> I[form and length checks by code]
     end
 
-    subgraph P3[3 · Train]
-        H --> J[keep the best-scoring summaries]
-        I --> J
-        J --> K[fine-tune the small model]
+    subgraph S3[3 · Train]
+        T[teacher summary<br/>judge-supported statements only] --> R[repair the student's section<br/>with what it misses]
+        H --> R
+        R --> K[fine-tune on repaired targets]
+        J --> D[DPO pairs: same length,<br/>fewer contradicted sentences]
+        D --> K
+        I --> K
         K -.next round.-> F
     end
 
-    K --> L[quantised model on the phone<br/>one pass, summary out]
+    K --> L[quantised model on the phone<br/>LiteRT-LM, CPU]
 ```
 
-**Questionnaire.** The transcript is cut into equal-time slices so the end of the meeting weighs as much as the start. Each item has four options plus "not in the summary"; wrong options are other numbers, people or outcomes from the same meeting, so a wrong binding is caught. Items answerable without any text are dropped. Grading is a letter comparison, with no grader model.
+**Questionnaire.** Questions are written per equal-time slice so the end of the meeting weighs as much as the start; for v5 they are assigned to parts by their timestamp. Each item has four options plus "not in the summary"; wrong options are other numbers, people or outcomes from the same meeting, so a wrong binding is caught. Items answerable without any text are dropped. A small answerer model picks a letter from the summary alone; grading is a letter comparison.
 
-**What we learned so far.**
+**What v4 taught us (whole-meeting one pass).**
 
 - *Scoring.* A fast multiple-choice judge (d3-turbo, kappa 0.91 against the large reference judge, 15–25× faster) scores the questionnaire. It cannot replace the per-sentence contradiction judge (kappa 0.26).
 - *Pair labels are noisy.* With ~17 questions per meeting, the best of 8 samples wins mostly by question-draw luck: held-out gain is only +0.02–0.05. A DPO round on such pairs was null on 4 seeds.
 - *Coverage is the driver.* An item is answered 63–70 % of the time when the summary cites a moment within 2 minutes of it, and 9–17 % otherwise. Bolt puts 65 % of its citations in the first third of long sessions (position bias).
 - *Length alone is not a lever.* For the sub-4B student, shorter budgets cost −0.04 to −0.05 and longer ones gain at most +0.04; spreading citations by prompt lost 0.07–0.19. Giving it the right facts (oracle) gains +0.2 to +0.3 at equal length: fact selection is the gap.
 - *Teacher.* Claude Opus 5.5 (low effort) answers 0.64 of the questions vs 0.44 for the previous teacher, with fewer contradicted sentences (20 % vs 32 %). It now writes the reference summaries for the whole training pool (212 meetings). Only its sentences that the judge finds supported are reused.
-
-**Training plan (per part, see Plan).** First tune the format without training. Then repair the student's own summaries with supported teacher statements for the parts they miss; this raises the score by +0.05 to +0.08 on a 31-meeting prototype. Each repair must pass a contradiction gate. Use RL only to make the format reliable (length band, no repeats, valid end).
 
 ## Layout
 
