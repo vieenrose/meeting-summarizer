@@ -19,7 +19,7 @@ The input is a 1.5–3 h zh-TW meeting (mixed with English) transcribed by on-de
 ## Design rules
 
 1. **Part size from effective context, not from the advertised window.** Small models read evenly only up to their effective context (RULER-style). We cut the transcript into parts of N ≈ 0.75 × effective context, at speaker changes.
-2. **Real time.** Processing ends no later than the meeting. The phone prefills each part while the meeting runs (dense speech arrives at ≈ 21k tokens/h ≈ 6 tok/s, far below CPU prefill speed), writes the part's summary as soon as the part closes, then frees its cache. After the meeting only the last part remains to decode.
+2. **Real time means reading.** The phone must *read* (prefill) each part while the meeting runs: dense speech arrives at ≈ 21k tokens/h ≈ 6 tok/s, below CPU prefill speed. Writing may wait for the end of the meeting as long as it is short compared with the meeting. The lightweight on-device ASR shares the CPU, so the prefill needs margin over the speech rate.
 3. **Fixed total length, shared across parts**, with a floor of ≈ 350–400 characters per part so each section stays readable; readability wins over length.
 4. **Deployment:** LiteRT-LM, fully on CPU.
 
@@ -42,10 +42,18 @@ Effective contexts are working assumptions: 2026 models rarely publish quality-a
 2. **Measure length per range.** Budgets 0.6× / 1× / 1.4×; keep the knee where +100 characters adds < +0.01 coverage or raises contradiction.
 3. **Prompt and format per part:** topic title, carried titles of earlier parts, code-merged decisions and actions.
 4. **Content training per part.** Repair the student's own summaries with judge-supported teacher statements (Claude Opus 5.5) for what they miss, behind a contradiction gate.
-5. **RL for format only** (length band, anchors, no repeats, valid end).
-6. **Phone measurement:** real-time check (incremental prefill + last-part decode) and memory, on the A53 (sub-2B) and the Note10+ (sub-4B).
+5. **RL.** For format (length band, anchors, no repeats, valid end), and for content: DPO against contradiction, on pairs labelled per sentence by the contradiction judge (same length within ±10 %, supported coverage not lower, strictly fewer contradicted sentences). Pairs ranked by the questionnaire alone are not used (too noisy).
+6. **Phone measurement:** real-time check (incremental prefill next to the ASR, then decode) and memory, on the A53 (sub-2B) and the Note10+ (sub-4B). The quantised model without the grammar is checked at this stage.
 
-Release criterion: on all three domains, coverage not lower and contradiction not higher than mobile-v2, length in budget, issue #1 closed by a human read.
+Release criterion: on all three domains, contradiction not higher than mobile-v2 and coverage not lower at matched length, length in budget, issue #1 closed by a human read.
+
+Known limitation: there is no dense 2 h development set; the dense sets are 0.5–0.8 h long and the long one (legislative, 3 h) is sparse.
+
+## Progress, 2026-11-13
+
+- **Data cut per part** for N = 24k and N = 12k: 350 and 619 training parts, 61 and 111 development parts. Each part carries its transcript, the teacher statements the judge found supported (6,171 of 8,170) and its share of the questionnaire. Single ASR turns too long to cut are split at punctuation, text unchanged.
+- **Repaired targets, whole-meeting version** (1,222 pairs): supported coverage rises from 0.59 to 0.86 on financial talks, 0.78 to 0.92 and 0.77 to 0.95 on multi-speaker sets, 0.23 to 0.43 on legislative sessions. First contradiction gate (financial talks): 3 % of sentences contradicted.
+- **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
 
 ## Training signal (from v4)
 
