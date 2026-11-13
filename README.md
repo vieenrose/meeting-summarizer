@@ -61,6 +61,17 @@ Known limitation: there is no dense 2 h development set; the dense sets are 0.5�
 - **Step 2 done (sub-4B):** length 1× (800 + 500 chars/h, cap 2200) kept. At 0.6× coverage falls by 0.10–0.13 (ali20 / msdev / legislative 0.57 / 0.43 / 0.55 against 0.70 / 0.56 / 0.64) and contradiction rises (16 / 23 / 23 % against 13 / 18 / 18 %). At 1.4× Bolt overshoots the budget (≈ 2× the 1× length, 3 of 13 legislative summaries in form) for no clear gain (0.69 / 0.55 / 0.67).
 - **Step 3 started:** fewer topics per part (1–3 instead of 3–6) shortened the summaries to ≈ 0.6× budget and cost 0.13–0.19 coverage; a length-matched variant (2–4 longer topics) is running.
 - **Meeting title (step 3).** Parts are summarised alone, so the whole-meeting title is written last: after the final part, the same model reads only the section titles with the first sentence of each (≈ 300–600 tokens, no transcript) and writes one title under a grammar (≤ 30 characters). Cost on the phone: a few seconds, after the meeting. Checked by code (length; share of title characters found in the section titles) and by a human read. First run on 23 dev meetings: titles cover the whole meeting, grounding 0.6–0.9 for most; open: titles cut at the 30-character cap (a hard cap stops mid-word), two titles name details not in the section titles (grounding 0.12, 0.38).
+- **Carried titles (step 3, running).** Each part after the first gets the section titles already written for the same meeting, with the rule: write only this part, reuse a title when a topic continues, do not repeat earlier facts. It plays the role of mobile-v2's notes, much lighter:
+
+  | | mobile-v2 journal | v5 carried titles |
+  |---|---|---|
+  | content | notes with facts, numbers, cited times | section titles only |
+  | role | source of the final summary (rewritten from the notes) | avoid repeats, keep titles consistent; each section is already final |
+  | size | grows with the meeting | a few dozen tokens |
+  | final pass | full rewrite | code merge (plus the meeting title) |
+  | phone cost | high (the agent was slow) | near zero |
+
+  Each fact is written once, straight from the transcript: every rewrite of a fact is a chance to bind a number to the wrong speaker, the main measured cause of contradiction. If titles are not enough, the next level carries the earlier sections themselves (a few hundred characters, already part of the final summary).
 - Speculative decoding with NVIDIA's DFlash drafter for Bolt: no gain under the form grammar, −26 % time without it (2.1–2.5 tokens per step on zh-TW); kept for later deployment tests only.
 - **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
 
