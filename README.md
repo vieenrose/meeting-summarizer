@@ -57,6 +57,10 @@ Known limitation: there is no dense 2 h development set; the dense sets are 0.5�
 
 - **Data cut per part** for N = 24k and N = 12k: 350 and 619 training parts, 61 and 111 development parts. Each part carries its transcript, the teacher statements the judge found supported (6,171 of 8,170) and its share of the questionnaire. Single ASR turns too long to cut are split at punctuation, text unchanged.
 - **Repaired targets, whole-meeting version** (1,222 pairs): supported coverage rises from 0.59 to 0.86 on financial talks, 0.78 to 0.92 and 0.77 to 0.95 on multi-speaker sets, 0.23 to 0.43 on legislative sessions. First contradiction gate (financial talks): 3 % of sentences contradicted.
+- **Step 1 done (sub-4B):** N = 32k for Bolt 4GB (see above).
+- **Step 2 done (sub-4B):** length 1× (800 + 500 chars/h, cap 2200) kept. At 0.6× coverage falls by 0.10–0.13 (ali20 / msdev / legislative 0.57 / 0.43 / 0.55 against 0.70 / 0.56 / 0.64) and contradiction rises (16 / 23 / 23 % against 13 / 18 / 18 %). At 1.4× Bolt overshoots the budget (≈ 2× the 1× length, 3 of 13 legislative summaries in form) for no clear gain (0.69 / 0.55 / 0.67).
+- **Step 3 started:** fewer topics per part (1–3 instead of 3–6) shortened the summaries to ≈ 0.6× budget and cost 0.13–0.19 coverage; a length-matched variant (2–4 longer topics) is running.
+- Speculative decoding with NVIDIA's DFlash drafter for Bolt: no gain under the form grammar, −26 % time without it (2.1–2.5 tokens per step on zh-TW); kept for later deployment tests only.
 - **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
 
 ## Measurement and training signal
