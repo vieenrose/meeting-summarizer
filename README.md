@@ -75,6 +75,41 @@ Known limitation: there is no dense 2 h development set; the dense sets are 0.5�
 - Speculative decoding with NVIDIA's DFlash drafter for Bolt: no gain under the form grammar, −26 % time without it (2.1–2.5 tokens per step on zh-TW); kept for later deployment tests only.
 - **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
 
+## Progress, 2026-11-14 to 11-16
+
+- **Step 3 closed:** 3–6 topics per part, no carried titles. The meeting title is written from the section titles plus their first sentence.
+- **Seed noise.** Generation on the GPU with llama.cpp is not deterministic. The same base model with the same seeds moves 1–2 points of contradiction between two batches. From now on, every arm is compared with a base generated in the same batch, or with 8 seeds.
+- **Rewrite-pair DPO (closed, no gain).** Pairs where the judge verified each edit gave contradiction ali20 14.8 % and msdev 18.0 %. The base over 8 seeds was ≈ 12.7 % and 16.5 %. A control with shuffled labels scored the same, so the pairs carry no signal.
+- **Best-of-8 by questionnaire is noisy.** Most of the score comes from which questions were drawn and from length. The held-out gain is only +0.02 to +0.05.
+- **Prompt "one fact per sentence, explicit actor" fails:** contradiction ali20 15.5 % (base 13.0 %), msdev ≈ 23 % (base 17.5 %), with 12 % more sentences.
+- **Deploy path checked.** Our own imatrix Q4 gives 13.3 / 17.0 % contradiction (ali20 / msdev), against 13.0 / 17.5 % for NVIDIA's Q4. Merging a LoRA and requantizing therefore costs nothing.
+- **Phone (A53, app engine with fused attention, Bolt 4GB, CPU only):**
+
+  | context | prefill | decode | memory |
+  |---|---|---|---|
+  | 4k | 36.3 tok/s | 3.67 tok/s | 2.6 GB |
+  | 32k | 12.4 tok/s | 1.33 tok/s | 2.83 GB |
+
+  Real time holds: processing takes no longer than the meeting.
+- **New goal: one-pass Bolt beats mobile-v2 (the E4B agent) on contradiction.** Today the gap is 5–10 points (base Bolt: ali20 13 %, msdev 17.5 %, legislative ≈ 19 %). The plan has four steps:
+  - **S0:** re-judge mobile-v2 with the same judge and settings.
+  - **S1:** extract, then write.
+  - **S2:** verify each sentence and delete the bad ones, reusing the part's KV cache.
+  - **S3:** distil the repaired outputs back into the generator.
+- **S2 gate 1 fails zero-shot.** Bolt answering 是/否 for each of its own sentences against the part transcript separates contradicted from supported sentences poorly:
+
+  | domain | AUC (target 0.80) |
+  |---|---|
+  | multi-speaker | 0.69 |
+  | financial talks | 0.61 |
+  | legislative | 0.65 |
+
+  On financial talks, deleting by this score removes as many supported sentences as contradicted ones.
+- **Running:**
+  - A listwise verifier LoRA, trained on 39k sentences labelled by the judge. One call per part, after the generation; its prefix is the cached KV of the base model.
+  - The S0 re-judging of mobile-v2.
+  - More pool seeds (5–8).
+
 ## Measurement and training signal
 
 **Idea.** A good summary is good in form and in content.
@@ -152,4 +187,4 @@ The agent is reliable but slow on a phone. v4 replaced it with one pass of a sma
 
 ## Status
 
-Research, not production. Still to do: plan steps 1–6, human evaluation, and measurement on the Note10+ / A53 (speed, heat).
+Research, not production. Steps 1–3 done; content training (step 4–5) gave no gain so far; current work is the verify-and-delete pass (S2) toward beating mobile-v2 on contradiction. Still to do: human evaluation and Note10+ heat measurement.
