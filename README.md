@@ -1,118 +1,65 @@
-# Meeting Summarizer v5 (plan)
+# Meeting Summarizer
 
-Reliable minutes for long meetings, produced **on the phone**, in real time, by a small model reading the meeting part by part.
+在手機上即時產生長會議的可靠摘要：會議進行中由裝置端 ASR 轉寫，小模型逐段讀取，會後輸出分段摘要。目標是 1.5–3 小時、以台灣華語為主並夾雜英文的會議。摘要裡每一句都標註它所依據的逐字稿時間。
 
-The input is a 1.5–3 h zh-TW meeting (mixed with English) transcribed by on-device ASR. The output is a **multi-part summary**: one short section per part under a topic title, then decisions and actions gathered by code. Every statement cites the transcript time it rests on.
+**狀態（2026-11-16）：研究階段。** 目前發佈的版本是 mobile-v2（見 [docs/mobile-v2.md](docs/mobile-v2.md)），v5 尚未發佈。
 
-**Status, 2026-11-13: plan. v5 replaces the v4 / v4.5 drafts; nothing is released yet.**
+## 架構（v5）
 
-## What a good summary is
+```mermaid
+flowchart LR
+    A[會議音訊] --> B[裝置端 ASR<br/>逐字稿]
+    B --> C[在換講者處切段<br/>每段 ≤ 32k tokens]
+    C --> D[Bolt 4GB 逐段讀取<br/>會議中預填 KV]
+    D --> E[每段寫出 3–6 個主題小節<br/>以文法約束格式]
+    E --> F[程式合併小節<br/>彙整決定與待辦]
+    F --> G[依小節標題與首句<br/>產生會議標題]
+```
 
-| criterion | how it is checked |
-|---|---|
-| low contradiction / hallucination | per-sentence judge against the transcript around each cited time |
-| high coverage | multiple-choice questionnaire over the whole meeting, scored per third |
-| fixed length | total budget whatever the meeting length, checked by code |
-| anchors for the fact checker | every sentence cites `[h:mm:ss]`, checked by code |
-| readable, free of [issue #1](https://github.com/vieenrose/meeting-summarizer/issues/1) | topic titles, no journal-like listing, decisions and actions easy to find |
+- **模型：** Nemotron-3.5-Bolt-E4B（4 GB），Q4 量化，只在手機 CPU 上執行。
+- **分段：** Bolt 實測的有效上下文是 32k。整場一次讀到 64k 時，後段的覆蓋率會從 0.64 掉到 0.51，所以每次最多只讀 32k。
+- **長度：** 總長 800 字加上每小時 500 字，上限 2200 字。可讀性比長度優先。
+- **格式：** 由文法強制主題標題與 `[時間]` 引用；「決定」與「待辦」由程式彙整。
+- **會議標題：** 寫完所有段落後產生。模型只看各小節的標題與首句，不看逐字稿，在手機上只需幾秒。
+- **即時性：** 在 Samsung Galaxy A53 上用 app 引擎（融合注意力）實測如下。處理時間不超過會議長度。
 
-## Design rules
-
-1. **Part size from effective context, not from the advertised window.** Small models read evenly only up to their effective context (RULER-style). We cut the transcript into parts of N ≈ 0.75 × effective context, at speaker changes.
-2. **Real time means reading.** The phone must *read* (prefill) each part while the meeting runs: dense speech arrives at ≈ 21k tokens/h ≈ 6 tok/s, below CPU prefill speed. Writing may wait for the end of the meeting as long as it is short compared with the meeting. The lightweight on-device ASR shares the CPU, so the prefill needs margin over the speech rate.
-3. **Fixed total length, shared across parts**, with a floor of ≈ 350–400 characters per part so each section stays readable; readability wins over length.
-4. **Deployment:** LiteRT-LM, fully on CPU.
-
-## Model ranges
-
-Measured token rate of the transcripts (median): financial talks 21k tok/h, multi-speaker 21k (crosstalk-heavy sets up to 36k), legislative 14k.
-
-| range | effective ctx (assumed) | part N | dense speech per part | parts for 2 h dense | length budget (total) | where |
-|---|---|---|---|---|---|---|
-| sub-2B (Gemma-4 E2B) | 16k | ≈ 12k | ≈ 35 min | 4 | 600 + 400 chars/h (to test) | Samsung Galaxy A53 |
-| sub-4B (Bolt 4GB) | 32k (measured) | ≤ 32k | ≈ 70 min | 2 | **800 + 500 chars/h, cap 2200 (measured)** | Galaxy Note10+ |
-| sub-7B | 64k | ≈ 48k | ≈ 135 min | 1 | 800 + 500 → test 1100 + 700 | phone if memory allows |
-| 14B | 128k | ≈ 96k | ≈ 4.5 h | 1 | 1100 + 700, cap 2200 (to test) | server: ceiling and local teacher |
-
-**Students.** Sub-4B: **Nemotron-3.5-Bolt-E4B (4 GB) is kept**; it is the current focus. Qwen3.5-4B was screened and dropped (30–43 % of sentences contradicted, against 13–20 % for Bolt). Sub-2B: Gemma-4 E2B (MiniCPM5-2B, LFM3-1.7B and Qwen3.5-2B all lost to it on contradiction); its sweep comes later.
-
-**Bolt holds 32k, not 64k.** On legislative sessions of up to 65k tokens, one pass covers 0.51 against 0.64 for 32k parts; the middle and last thirds fall to 0.38 and 0.37 while the first holds. Bolt is never given more than 32k per pass.
-
-Effective contexts are working assumptions: 2026 models rarely publish quality-at-length, and summarising (binding numbers to speakers across the meeting) is harder than retrieval. Each range's real N is measured (step 1 below).
-
-## Plan
-
-1. **Measure N per range.** Sweep part size (sub-2B 8k/12k/16k, sub-4B 16k/24k/32k, sub-7B 48k, 14B one pass) against one pass, at equal total length, 4 seeds, three domains. Pick N where the late thirds stop dropping below the first.
-2. **Measure length per range.** Budgets 0.6× / 1× / 1.4×; keep the knee where +100 characters adds < +0.01 coverage or raises contradiction.
-3. **Prompt and format per part:** topic title, carried titles of earlier parts, code-merged decisions and actions.
-4. **Content training per part.** Repair the student's own summaries with judge-supported teacher statements (Claude Opus 5.5) for what they miss, behind a contradiction gate. The meeting-title task joins the same training mix: inputs are the section outlines of the student's own summaries, targets are titles written by Claude Opus 5.5 from the same outline and prompt, kept only if they pass the code checks (length, grounding in the section titles, no list of themes); measured by a pairwise judge (student title vs teacher title, outline only) and a human read.
-5. **RL.** For format (length band, anchors, no repeats, valid end), and for content: DPO against contradiction, on pairs labelled per sentence by the contradiction judge (same length within ±10 %, supported coverage not lower, strictly fewer contradicted sentences). Pairs ranked by the questionnaire alone are not used (too noisy).
-6. **Phone measurement:** real-time check (incremental prefill next to the ASR, then decode) and memory, on the A53 (sub-2B) and the Note10+ (sub-4B). The quantised model without the grammar is checked at this stage.
-
-Release criterion: on all three domains, contradiction not higher than mobile-v2 and coverage not lower at matched length, length in budget, issue #1 closed by a human read.
-
-Known limitation: there is no dense 2 h development set; the dense sets are 0.5–0.8 h long and the long one (legislative, 3 h) is sparse.
-
-## Progress, 2026-11-13
-
-- **Data cut per part** for N = 24k and N = 12k: 350 and 619 training parts, 61 and 111 development parts. Each part carries its transcript, the teacher statements the judge found supported (6,171 of 8,170) and its share of the questionnaire. Single ASR turns too long to cut are split at punctuation, text unchanged.
-- **Repaired targets, whole-meeting version** (1,222 pairs): supported coverage rises from 0.59 to 0.86 on financial talks, 0.78 to 0.92 and 0.77 to 0.95 on multi-speaker sets, 0.23 to 0.43 on legislative sessions. First contradiction gate (financial talks): 3 % of sentences contradicted.
-- **Step 1 done (sub-4B):** N = 32k for Bolt 4GB (see above).
-- **Step 2 done (sub-4B):** length 1× (800 + 500 chars/h, cap 2200) kept. At 0.6× coverage falls by 0.10–0.13 (ali20 / msdev / legislative 0.57 / 0.43 / 0.55 against 0.70 / 0.56 / 0.64) and contradiction rises (16 / 23 / 23 % against 13 / 18 / 18 %). At 1.4× Bolt overshoots the budget (≈ 2× the 1× length, 3 of 13 legislative summaries in form) for no clear gain (0.69 / 0.55 / 0.67).
-- **Step 3 started:** fewer topics per part (1–3 instead of 3–6) shortened the summaries to ≈ 0.6× budget and cost 0.13–0.19 coverage; a length-matched variant (2–4 longer topics) is running.
-- **Meeting title (step 3).** Parts are summarised alone, so the whole-meeting title is written last: after the final part, the same model reads only the section titles with the first sentence of each (≈ 300–600 tokens, no transcript) and writes one title under a grammar (≤ 30 characters). Cost on the phone: a few seconds, after the meeting. Checked by code (length; share of title characters found in the section titles) and by a human read. First run on 23 dev meetings: titles cover the whole meeting, grounding 0.6–0.9 for most; open: titles cut at the 30-character cap (a hard cap stops mid-word), two titles name details not in the section titles (grounding 0.12, 0.38).
-- **Carried titles (step 3, running).** Each part after the first gets the section titles already written for the same meeting, with the rule: write only this part, reuse a title when a topic continues, do not repeat earlier facts. It plays the role of mobile-v2's notes, much lighter:
-
-  | | mobile-v2 journal | v5 carried titles |
-  |---|---|---|
-  | content | notes with facts, numbers, cited times | section titles only |
-  | role | source of the final summary (rewritten from the notes) | avoid repeats, keep titles consistent; each section is already final |
-  | size | grows with the meeting | a few dozen tokens |
-  | final pass | full rewrite | code merge (plus the meeting title) |
-  | phone cost | high (the agent was slow) | near zero |
-
-  Each fact is written once, straight from the transcript: every rewrite of a fact is a chance to bind a number to the wrong speaker, the main measured cause of contradiction. If titles are not enough, the next level carries the earlier sections themselves (a few hundred characters, already part of the final summary).
-- Speculative decoding with NVIDIA's DFlash drafter for Bolt: no gain under the form grammar, −26 % time without it (2.1–2.5 tokens per step on zh-TW); kept for later deployment tests only.
-- **Open:** at N = 12k the questionnaire is thin per part on legislative sessions (25 of 347 parts have no question); more questions are needed there.
-
-## Progress, 2026-11-14 to 11-16
-
-- **Step 3 closed:** 3–6 topics per part, no carried titles. The meeting title is written from the section titles plus their first sentence.
-- **Seed noise.** Generation on the GPU with llama.cpp is not deterministic. The same base model with the same seeds moves 1–2 points of contradiction between two batches. From now on, every arm is compared with a base generated in the same batch, or with 8 seeds.
-- **Rewrite-pair DPO (closed, no gain).** Pairs where the judge verified each edit gave contradiction ali20 14.8 % and msdev 18.0 %. The base over 8 seeds was ≈ 12.7 % and 16.5 %. A control with shuffled labels scored the same, so the pairs carry no signal.
-- **Best-of-8 by questionnaire is noisy.** Most of the score comes from which questions were drawn and from length. The held-out gain is only +0.02 to +0.05.
-- **Prompt "one fact per sentence, explicit actor" fails:** contradiction ali20 15.5 % (base 13.0 %), msdev ≈ 23 % (base 17.5 %), with 12 % more sentences.
-- **Deploy path checked.** Our own imatrix Q4 gives 13.3 / 17.0 % contradiction (ali20 / msdev), against 13.0 / 17.5 % for NVIDIA's Q4. Merging a LoRA and requantizing therefore costs nothing.
-- **Phone (A53, app engine with fused attention, Bolt 4GB, CPU only):**
-
-  | context | prefill | decode | memory |
+  | 上下文 | 預填 | 解碼 | 記憶體 |
   |---|---|---|---|
   | 4k | 36.3 tok/s | 3.67 tok/s | 2.6 GB |
   | 32k | 12.4 tok/s | 1.33 tok/s | 2.83 GB |
 
-  Real time holds: processing takes no longer than the meeting.
-- **New goal: one-pass Bolt beats mobile-v2 (the E4B agent) on contradiction.** Today the gap is 5–10 points (base Bolt: ali20 13 %, msdev 17.5 %, legislative ≈ 19 %). The plan has four steps:
-  - **S0:** re-judge mobile-v2 with the same judge and settings.
-  - **S1:** extract, then write.
-  - **S2:** verify each sentence and delete the bad ones, reusing the part's KV cache.
-  - **S3:** distil the repaired outputs back into the generator.
-- **S2 gate 1 fails zero-shot.** Bolt answering 是/否 for each of its own sentences against the part transcript separates contradicted from supported sentences poorly:
+## 評估方式
 
-  | domain | AUC (target 0.80) |
-  |---|---|
-  | multi-speaker | 0.69 |
-  | financial talks | 0.61 |
-  | legislative | 0.65 |
+每一輪都在三個保留集上評估，各跑 4 個 seed：財經節目（msdev）、立法院質詢（q12）、多人會議（ali20）。
 
-  On financial talks, deleting by this score removes as many supported sentences as contradicted ones.
-- **Running:**
-  - A listwise verifier LoRA, trained on 39k sentences labelled by the judge. One call per part, after the generation; its prefix is the cached KV of the base model.
-  - The S0 re-judging of mobile-v2.
-  - More pool seeds (5–8).
+- **矛盾率：** 由 Qwen3.8-27B 判斷每一句與引用時間附近的逐字稿是否相符，分為「支持」、「矛盾」、「無依據」三類。
+- **覆蓋率：** 讀者只拿到摘要，回答一份涵蓋整場會議的選擇題問卷，以答對比例計分（d3-turbo，與大型評審的 kappa 為 0.91）。
+- **原則：** 不修正 ASR 輸出，也不排除長會議。
 
-## Example: one meeting, input and output
+## 最新結果
 
-What the current pipeline does with one real meeting. The model is Bolt 4GB, Q4, with no fine-tuning: none of the training rounds beat the base model, so the base is still the best checkpoint. The settings are the ones used in the evaluation: one pass per 32k-token part, the RD prompt with its grammar, length 1×, seed 1. The meeting is AliMeeting `R1019_M1954`, from the ali20 dev set. It is a public Mandarin corpus, converted to Traditional characters. Two speakers plan a company trip, the meeting lasts 33:18, and the ASR output is used as-is, without correction. Here the meeting fits in a single part.
+**目標：單次讀取的 Bolt 在矛盾率上勝過 mobile-v2。** mobile-v2 是在 Gemma-4 E4B 上執行的閱讀代理。
+
+| 資料集 | mobile-v2 | Bolt 基礎模型 | Bolt＋自我驗證刪句（初步） |
+|---|---|---|---|
+| ali20 | 10 % | 12–13 % | 10.4 % |
+| msdev | 16 % | 16.5–17.5 % | 13.6 % |
+| q12 | 18 % | 18–19 % | 14.9 % |
+
+- **以每場會議計算，Bolt 已經更少錯誤。** mobile-v2 寫出的句子大約是 Bolt 的兩倍：在 msdev 上每場有 12.3 句矛盾，Bolt 是 6.9 句；在 q12 上是 21.5 句對 11.6 句。
+- **自我驗證（S2）：** 在 Bolt 上訓練一個 LoRA 驗證器。它沿用生成時的 KV 快取，一次判斷整段裡的每一句，刪除 P(否) ≥ 0.5 的句子。
+  - 區分能力 AUC 為 0.70，打亂標籤的對照組只有 0.56。
+  - 刪掉 5–9 % 的句子。
+  - 上表這一欄是依現有評審標籤推算的；重新評審與覆蓋率測量正在進行。
+- **沒有帶來進步的嘗試：**
+  - 改寫配對 DPO 與 best-of-8 SFT：與打亂標籤的對照組沒有差別。
+  - 「一句一事實」提示：矛盾率反而上升。
+  - 零樣本自我驗證：AUC 只有 0.61–0.69。
+- **注意：** 同一模型、同樣的 seed，在不同批次間會有 1–2 個百分點的差異。每個實驗組都和同一批次產生的基礎模型比較。
+
+## 範例：一場真實會議
+
+以下是目前表現最好的版本（Bolt 4GB 基礎模型，Q4，seed 1）實際的輸入與輸出，未經任何修改。會議是 AliMeeting `R1019_M1954`，屬於 ali20 開發集，長 33:18，內容是兩人規劃公司出遊。原始語料是公開的普通話語料，已轉為繁體。這場會議只有一段。
 
 <details><summary>Input: full ASR transcript (16,585 characters)</summary>
 
@@ -700,121 +647,58 @@ What the current pipeline does with one real meeting. The model is Bolt 4GB, Q4,
 ```
 </details>
 
-**Output: the final summary, unedited:**
+**輸出：會議標題**
 
-## 預算與參與人數規劃
+> **半年度出遊預算規劃與多地旅遊方案比較建議**
+
+標題正確但偏籠統，沒有提到結論（三地由員工投票決定）和日期。
+
+**輸出：摘要**
+
+#### 預算與參與人數規劃
 
 公司半年度出遊的預算是十萬 [0:13]。該科室共有一百號員工 [0:13]。S1 建議若平攤至一百號人，每人約一千塊錢 [0:41]。S2 提出部分出遊給優秀員工的方案，但 S1 強調所有一百號人都應納入考量 [0:34]。若全體出遊，人均一千塊錢適用於周邊兩天遊 [1:10]。此外，公司提供個人安全險，費用為六十塊錢/人，一百號人總成本為六千塊錢 [14:15]。
 
-## 旅遊方案比較與建議
+#### 旅遊方案比較與建議
 
 S2 初步建議普格縣溫泉，有彩虹瀑布，但 S1 提議多考慮其他地點如西昌、九寨溝、青城山及峨眉山 [2:57]。S1 曾推薦九寨溝包團七百九十八，為三天兩夜且包含三星酒店 [8:29]。峨眉山人均約五六百，兩天時間可看金頂日出，建議自由行而非跟團 [13:05]。S2 偏向自由行，認為更具彈性 [4:30]。S1 最終建議由員工投票決定地點，選項包括西昌、九寨溝和峨眉山 [18:11]。九寨溝的包團（八百/人）計算後，一百人總計八萬塊錢，剩餘兩萬可用於額外開支 [22:37]。
 
-## 交通與住宿成本估算
+#### 交通與住宿成本估算
 
 若選擇自由行並包車，三十九人車約四千，四十九人車約四千五百 [4:51]。一百人需至少兩輛大巴車，加上兩個私家車，總支出約一萬二 [5:37]。普格溫泉兩星酒店標間二百八十塊錢，八十人共四十間，約一萬一千多 [6:18]。若以西昌為例，包車（兩天）及住宿（兩天）預估總成本約二萬四 [19:19]。若選九寨溝包團，一百人總費用約九萬多，加上 S1 個人補助一萬塊錢，總預算符合十萬限制 [21:06]。若以八十人計算，吃住行總成本約六萬五，加上門票後約八萬七，接近十萬預算 [20:49]。
 
-## 決定
+#### 決定
 
 - 地點將透過明天大會讓員工投票決定，選項包含西昌、九寨溝及峨眉山 [15:05]
 - 確定出遊時間點為五月中旬的十五號或十八號 [33:03]
 
-## 待辦
+#### 待辦
 
 - S2 需整理並製作九寨溝方案的 PPT，內容豐富並鼓勵員工感恩公司福利 [31:10]
 - S2 需向朋友確認九寨溝七百九十八包團包含細節，如篝火晚會是否包含 [12:07]
 - S2 需聯繫旅遊公司，詢問可開發票的包車價格，確保不超出預算 [29:56]
 - S2 需準備並提交詳細的預算表給 S1 [22:00]
 
-**What the contradiction judge (Qwen3.8-27B) found.** Of the 19 sentences it judged, 13 are supported by the transcript, 3 are contradicted and 3 are unsupported.
+**評審結果：** 共 19 句，其中 13 句獲支持、3 句矛盾、3 句無依據。這場的錯誤率與 ali20 的平均水準相近。
 
-- **Strengths.** The structure is clear. Every number and quote can be traced to a timestamp. The budget, head count and transport prices are correct. The vote between three destinations and the actions assigned to S2 are captured.
-- **Contradicted (3).** All three are the typical failure: correct numbers placed in the wrong frame.
-  - [13:05] Emei Shan: the summary says free travel was recommended. In the transcript, S1 asks whether a tour group is needed, S2 answers with the cost of a chartered bus, and nothing is concluded.
-  - [21:06] The summary says the Jiuzhaigou total fits the 100k budget. S1 actually says that any overrun is not their problem; the fit is never agreed.
-  - [20:49] The summary links 65k and 87k in a way the speakers did not: 65k is the total including lodging, 87k includes the meals.
-- **Unsupported (3).**
-  - The list of destinations at [2:57]. That passage names only 西昌, which the ASR wrote as 西餐; Jiuzhaigou, Qingcheng Shan and Emei Shan come up later in the meeting.
-  - A 24k cost estimate whose basis is mixed up.
-  - The decisions and actions block. The May 15 or 18 date and the PPT are in the transcript, at [7:31], [31:21] and [33:03]; the judge only looked at the passages around the cited timestamps, so this flag is mostly a false alarm from the judge, not an error in the summary.
+- **優點：** 結構清楚，每個數字都能追溯到時間點。預算、人數、交通價格都正確，投票的三個選項與 S2 的待辦也都有寫到。
+- **矛盾：** 三句都是典型的錯誤——數字本身正確，但放錯了脈絡。
+  - [13:05]「建議自由行」：會中其實沒有這個結論。
+  - [21:06]「總預算符合十萬限制」：S1 實際說的是超支他不管。
+  - [20:49]：把六萬五與八萬七的組成搞混了。
+- **無依據：**
+  - [2:57] 把後來才提到的九寨溝、青城山、峨眉山提前列出（該處 ASR 把「西昌」誤轉為「西餐」）。
+  - 二萬四的計算基礎有誤。
+  - 決定與待辦區塊被判為無依據，其實是評審誤判：五月十五或十八號與 PPT 都在逐字稿裡（[7:31]、[31:21]、[33:03]），只是不在評審查看的引用時間附近。
 
-On this dev set, the error rate of this meeting is close to the model's average (ali20: 13 % contradicted). The verify-and-delete pass (S2) aims to remove sentences like the three above.
+S2 的自我驗證刪句，就是要刪掉像上面這三句矛盾的句子。
 
-## Measurement and training signal
+## 程式結構
 
-**Idea.** A good summary is good in form and in content.
-
-- *Form* (sections, length, timestamps) is enforced by a grammar and checked by code.
-- *Content* is measured two ways: a questionnaire (a reader who holds only the summary should answer questions that cover the meeting) and a per-sentence contradiction judge.
-
-```mermaid
-flowchart TD
-    A[meeting audio] --> B[on-device ASR<br/>transcript]
-    B --> P[cut into parts of N tokens<br/>at speaker changes]
-
-    subgraph S1[1 · Summarise per part]
-        P --> F[small model reads one part<br/>writes its section]
-        F --> M[code merges sections,<br/>decisions and actions]
-    end
-
-    subgraph S2[2 · Measure]
-        B --> Q[questionnaire<br/>multiple-choice items per part]
-        F --> G[answerer sees only the summary]
-        Q --> G
-        G --> H[coverage score]
-        F --> J[contradiction judge<br/>per sentence, at the cited time]
-        F --> I[form and length checks by code]
-    end
-
-    subgraph S3[3 · Train]
-        T[teacher summary<br/>judge-supported statements only] --> R[repair the student's section<br/>with what it misses]
-        H --> R
-        R --> K[fine-tune on repaired targets]
-        J --> D[DPO pairs: same length,<br/>fewer contradicted sentences]
-        D --> K
-        I --> K
-        K -.next round.-> F
-    end
-
-    K --> L[quantised model on the phone<br/>LiteRT-LM, CPU]
-```
-
-**Questionnaire.** Questions are written per equal-time slice so the end of the meeting weighs as much as the start; for v5 they are assigned to parts by their timestamp. Each item has four options plus "not in the summary"; wrong options are other numbers, people or outcomes from the same meeting, so a wrong binding is caught. Items answerable without any text are dropped. A small answerer model picks a letter from the summary alone; grading is a letter comparison.
-
-**What v4 taught us (whole-meeting one pass).**
-
-- *Scoring.* A fast multiple-choice judge (d3-turbo, kappa 0.91 against the large reference judge, 15–25× faster) scores the questionnaire. It cannot replace the per-sentence contradiction judge (kappa 0.26).
-- *Pair labels are noisy.* With ~17 questions per meeting, the best of 8 samples wins mostly by question-draw luck: held-out gain is only +0.02–0.05. A DPO round on such pairs was null on 4 seeds.
-- *Coverage is the driver.* An item is answered 63–70 % of the time when the summary cites a moment within 2 minutes of it, and 9–17 % otherwise. Bolt puts 65 % of its citations in the first third of long sessions (position bias).
-- *Length alone is not a lever.* For the sub-4B student, shorter budgets cost −0.04 to −0.05 and longer ones gain at most +0.04; spreading citations by prompt lost 0.07–0.19. Giving it the right facts (oracle) gains +0.2 to +0.3 at equal length: fact selection is the gap.
-- *Teacher.* Claude Opus 5.5 (low effort) answers 0.64 of the questions vs 0.44 for the previous teacher, with fewer contradicted sentences (20 % vs 32 %). It now writes the reference summaries for the whole training pool (212 meetings). Only its sentences that the judge finds supported are reused.
-
-## Layout
-
-| path | contents |
+| 路徑 | 內容 |
 |---|---|
-| `eval/onepass_summary.py` | one-pass summary with the form grammar |
-| `eval/qa_build.py`, `eval/qa_mcq.py` | questionnaire builder; multiple-choice conversion |
-| `eval/qa_score.py`, `eval/qa_score_mcq.py` | open-answer and multiple-choice scoring |
-| `eval/judge_prose_tx.py`, `eval/judge_prose.py` | contradiction judge; coverage judge |
-| `scripts/qa_metric.sh`, `scripts/qa_spread.sh`, `scripts/qa_mcq.sh` | validation runs of the questionnaire score |
+| `eval/onepass_summary.py` | 逐段摘要（文法、長度預算） |
+| `eval/judge_prose_tx.py` | 逐句矛盾評審 |
+| `eval/qa_build.py`、`eval/qa_mcq.py`、`eval/qa_score_mcq.py` | 建立問卷、轉為選擇題、計分 |
 
-## Evaluation
-
-Every round is read on three held-out sets (financial talks, legislative sessions, multi-speaker meetings) with several seeds:
-
-- **Contradicted rate** (`eval/judge_prose_tx.py`): each sentence is checked against the transcript around its timestamp and labelled supported, contradicted or unsupported.
-- **Coverage** (`eval/judge_prose.py --units`): share of reference points the summary carries.
-- **Questionnaire score** (v4): correct, wrong and abstained answers, by third of the meeting and per 1000 characters.
-
-ASR output is never corrected; long meetings are never excluded.
-
-## Released model and earlier work
-
-The model currently released is **mobile-v2**, a reading agent with an external journal on Gemma-4-E2B/E4B. Its model card, app integration and results are in [docs/mobile-v2.md](docs/mobile-v2.md); older versions are in [docs/version-history.md](docs/version-history.md).
-
-The agent is reliable but slow on a phone. v4 replaced it with one pass of a smaller model; v5 keeps one pass but per part, sized to the model. Nothing from v4 / v5 is released yet.
-
-## Status
-
-Research, not production. Steps 1–3 done; content training (step 4–5) gave no gain so far; current work is the verify-and-delete pass (S2) toward beating mobile-v2 on contradiction. Still to do: human evaluation and Note10+ heat measurement.
+舊版本見 [docs/version-history.md](docs/version-history.md)。
