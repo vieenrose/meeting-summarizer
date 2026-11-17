@@ -66,7 +66,7 @@ flowchart LR
 
 同一份逐字稿，兩代各自寫出的摘要，都是使用者在手機上會看到的形式。文字未經修改，只把小節標題改為粗體。
 
-- **會議：** 立法院財政委員會，專題報告「促進臺灣金融市場規模發展之執行策略」與委員質詢（IVOD `ivod_16555`，屬於 q12 開發集）。逐字稿從 28:44 到 3:31:26，約 3 小時，65,238 tokens，所以 v5 必須分成 3 段、各讀一次再合併。逐字稿與兩邊的摘要全文放在 Hugging Face：[`samples/readme-example-ivod_16555`](https://huggingface.co/datasets/Luigi/ivod-zhtw-10min-maps/tree/main/samples/readme-example-ivod_16555)（ASR 原始輸出，未修正）。
+- **會議：** 立法院財政委員會，專題報告「促進臺灣金融市場規模發展之執行策略」與委員質詢（IVOD `ivod_16555`，屬於 q12 開發集）。逐字稿從 28:44 到 3:31:26，約 3 小時，65,238 tokens，所以 v5 必須分成 3 段、各讀一次再合併。逐字稿與兩邊的摘要全文放在 Hugging Face：[`Luigi/meeting-summarizer-examples`](https://huggingface.co/datasets/Luigi/meeting-summarizer-examples/tree/main/ivod_16555)（ASR 原始輸出，未修正）。
 - **最新一代（v5，最終候選）：** `g0mc`＝Bolt 4GB 併入句子層級 DPO 的 LoRA（`psent3n`）後重新量化為 Q4_K_M，seed 1，**精簡格式、不含決定／待辦清單**：整場會議合計 3 到 6 個主題，篇幅為 500 字加每小時 250 字，上限 1,200 字。seed 2–4 的結果相近（670–777 字，同樣 6 個主題，各 2 句矛盾）。
 - **上一代（mobile-v2）：** Gemma-4 E4B 閱讀代理，也就是目前發佈的版本。這裡顯示的是段落式摘要：代理讀完會議後，用整合文件 §6.6 的提示把筆記寫成段落。因為這場會議超過 3 小時，使用**長會議版**的提示：輸出上限隨會議長度放寬（這一場是 1,357 tokens，一般版固定 600），並要求依時間順序涵蓋前、中、後段。即使如此，4k context 在寫到 2:48 時用完，最後一句沒有寫完，原樣保留。一般版（600 tokens）在這一場只寫到 1:53。
 - **評審：** 同一個 Qwen3.8-27B 評審，以行為單位判斷（小節標題不評）。
